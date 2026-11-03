@@ -1,12 +1,14 @@
 ﻿<#
 .SYNOPSIS
-    Fluent Network Sentinel - Windows 11 Fluent UI 即時網路狀態監控工具 (4 目標版本)
+    Fluent Network Sentinel - Windows 11 Fluent UI 即時網路狀態監控工具 (智慧網段偵測版)
 .DESCRIPTION
     PowerShell + WPF 設計的 Windows 11 Fluent UI 網路連線監控程式。
-    - 持續即時監控外部網際網路 (www.google.com)
-    - 同步即時監控 3 組區域網路設備 IP (預設自動偵測 Gateway，各組均允許於 UI 隨時獨立修改)
+    - 先自動偵測目前作用中的網路介面與網段 (Subnet / Gateway / Local IP)
+    - 自動提取當前網段內的閘道、活躍鄰近設備與本機 IP 進行並行 Ping 監控
+    - 同步持續監控外部網際網路 (www.google.com)
+    - 3 組區域網路設備 IP 均支援隨時自訂修改 (Enter 或點擊套用)
     - 提供連線延遲 (目前/平均/最小/最大)、封包遺失率、回應歷史日誌
-    - 支援調整偵測間隔 (1s ~ 5s，黑底白字 Fluent 風格)、暫停/繼續、重置統計與斷線音效提示
+    - 支援調整偵測間隔 (1s ~ 5s，黑底白字 Fluent 風格)、暫停/繼續、重置統計、重新偵測網段與斷線音效提示
     - 採用非同步 Background Ping 機制，UI 介面完全不卡頓
 #>
 
@@ -169,33 +171,90 @@ public class PingMonitorRunner {
 
 Add-Type -TypeDefinition $csharpSource -ReferencedAssemblies "PresentationFramework", "WindowsBase", "System"
 
-# 3. 自動偵測本機預設閘道 (Default Gateway)
-$detectedGateway = "192.168.1.1"
-try {
-    $gwRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($gwRoute -and $gwRoute.NextHop -and $gwRoute.NextHop -ne '0.0.0.0') {
-        $detectedGateway = $gwRoute.NextHop
+# 3. 智慧網段偵測函式：偵測目前網路介面、網段、本機 IP 與閘道，並推算同網段目標
+function Get-CurrentSubnetInfo {
+    $info = [PSCustomObject]@{
+        InterfaceName = "Wi-Fi / Ethernet"
+        LocalIP       = "192.168.1.100"
+        Gateway       = "192.168.1.1"
+        PrefixLength  = 24
+        Subnet        = "192.168.1.0/24"
+        Target1       = "192.168.1.1"
+        Target2       = "192.168.1.2"
+        Target3       = "192.168.1.254"
+        Target2Desc   = "網段設備"
+        Target3Desc   = "本機網卡"
     }
-} catch { }
 
-# 計算推薦的次要區域 IP (同網段 .2 與 .254)
-$defaultLocal2 = "192.168.1.2"
-$defaultLocal3 = "8.8.8.8"
-try {
-    $ipParts = $detectedGateway.Split('.')
-    if ($ipParts.Count -eq 4) {
-        $prefix = "$($ipParts[0]).$($ipParts[1]).$($ipParts[2])"
-        $defaultLocal2 = "$prefix.2"
-        $defaultLocal3 = "$prefix.254"
-    }
-} catch { }
+    try {
+        $netConfig = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1
+        if ($netConfig) {
+            $info.InterfaceName = $netConfig.InterfaceAlias
+            $ipObj = $netConfig.IPv4Address | Select-Object -First 1
+            if ($ipObj) {
+                $info.LocalIP = $ipObj.IPAddress
+            }
+            $gwObj = $netConfig.IPv4DefaultGateway | Select-Object -First 1
+            if ($gwObj) {
+                $info.Gateway = $gwObj.NextHop
+            }
+
+            $netIP = Get-NetIPAddress -InterfaceIndex $netConfig.InterfaceIndex -AddressFamily IPv4 | Where-Object { $_.IPAddress -eq $info.LocalIP } | Select-Object -First 1
+            if ($netIP) {
+                $info.PrefixLength = $netIP.PrefixLength
+            }
+
+            # 分析 IPv4 網段前綴
+            $ipParts = $info.LocalIP.Split('.')
+            if ($ipParts.Count -eq 4) {
+                $prefix3 = "$($ipParts[0]).$($ipParts[1]).$($ipParts[2])"
+                $info.Subnet = "$prefix3.0/$($info.PrefixLength)"
+                
+                # 目標 1：網段預設閘道 (Gateway / 路由器)
+                $info.Target1 = $info.Gateway
+
+                # 目標 2：同網段內已探測到的活躍設備 (Neighbor) 或網段 .2
+                $neighbors = Get-NetNeighbor -InterfaceIndex $netConfig.InterfaceIndex -AddressFamily IPv4 -State Reachable -ErrorAction SilentlyContinue |
+                             Where-Object { 
+                                 $_.IPAddress -ne $info.Gateway -and 
+                                 $_.IPAddress -ne $info.LocalIP -and 
+                                 $_.IPAddress -notmatch '^(224\.|239\.|255\.|127\.|169\.254\.)' -and
+                                 $_.IPAddress.StartsWith("$prefix3.")
+                             }
+
+                $activeNeighbor = ($neighbors | Select-Object -First 1).IPAddress
+                if ($activeNeighbor) {
+                    $info.Target2 = $activeNeighbor
+                    $info.Target2Desc = "網段活躍設備"
+                } else {
+                    $info.Target2 = "$prefix3.2"
+                    $info.Target2Desc = "網段主機 #2"
+                }
+
+                # 目標 3：本機實體 IP (驗證本機網卡與堆疊) 或網段 .254
+                if ($info.LocalIP -and $info.LocalIP -ne $info.Target1 -and $info.LocalIP -ne $info.Target2) {
+                    $info.Target3 = $info.LocalIP
+                    $info.Target3Desc = "本機實體 IP"
+                } else {
+                    $info.Target3 = "$prefix3.254"
+                    $info.Target3Desc = "網段主機 #3"
+                }
+            }
+        }
+    } catch { }
+
+    return $info
+}
+
+# 執行初次網段偵測
+$detectedSubnet = Get-CurrentSubnetInfo
 
 # 4. Windows 11 Fluent UI XAML 定義
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Network Sentinel - Fluent Network Monitor"
-        Height="870" Width="810" MinHeight="720" MinWidth="740"
+        Height="890" Width="820" MinHeight="740" MinWidth="750"
         WindowStartupLocation="CenterScreen"
         Background="#181818"
         Foreground="#EDEDED"
@@ -409,13 +468,14 @@ $xaml = @"
 
     <Grid Margin="20">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/> <!-- Header -->
-            <RowDefinition Height="Auto"/> <!-- Controls Toolbar -->
-            <RowDefinition Height="*"/>    <!-- Cards Area (ScrollViewer) -->
-            <RowDefinition Height="175"/>  <!-- Activity Feed -->
+            <RowDefinition Height="Auto"/> <!-- 0: Header -->
+            <RowDefinition Height="Auto"/> <!-- 1: Controls Toolbar -->
+            <RowDefinition Height="Auto"/> <!-- 2: Subnet Information Banner -->
+            <RowDefinition Height="*"/>    <!-- 3: Cards Area (ScrollViewer) -->
+            <RowDefinition Height="170"/>  <!-- 4: Activity Feed -->
         </Grid.RowDefinitions>
 
-        <!-- Header -->
+        <!-- 0: Header -->
         <Grid Grid.Row="0" Margin="0,0,0,12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -426,7 +486,7 @@ $xaml = @"
                     <TextBlock Text="⚡" FontSize="20" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="#60CDFF"/>
                     <TextBlock Text="Network Sentinel" FontSize="19" FontWeight="Bold" Foreground="#FFFFFF" VerticalAlignment="Center"/>
                 </StackPanel>
-                <TextBlock Text="即時監控外部網際網路 (Google) 與 3 組區域網路設備 IP 連線狀態" FontSize="12" Foreground="#8E8E8E" Margin="28,2,0,0"/>
+                <TextBlock Text="智慧分析目前網段，同步即時監控外部網際網路 (Google) 與 3 組同網段設備 IP" FontSize="12" Foreground="#8E8E8E" Margin="28,2,0,0"/>
             </StackPanel>
 
             <!-- Overall Status Badge -->
@@ -438,8 +498,8 @@ $xaml = @"
             </Border>
         </Grid>
 
-        <!-- Controls Toolbar (偵測間隔設定) -->
-        <Border Grid.Row="1" Background="#202020" BorderBrush="#2E2E2E" BorderThickness="1" CornerRadius="6" Padding="12,6" Margin="0,0,0,12">
+        <!-- 1: Controls Toolbar (偵測間隔設定: 黑底白字) -->
+        <Border Grid.Row="1" Background="#202020" BorderBrush="#2E2E2E" BorderThickness="1" CornerRadius="6" Padding="12,6" Margin="0,0,0,10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -450,7 +510,6 @@ $xaml = @"
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock Text="偵測間隔:" VerticalAlignment="Center" FontSize="12" Foreground="#B0B0B0" Margin="0,0,8,0"/>
-                    <!-- 偵測間隔 ComboBox: 完全黑底白字風格 -->
                     <ComboBox x:Name="CmbInterval" Style="{StaticResource FluentComboBoxStyle}" SelectedIndex="0" Width="125" Height="28">
                         <ComboBoxItem Content="1 秒 (1000ms)" Tag="1000"/>
                         <ComboBoxItem Content="2 秒 (2000ms)" Tag="2000"/>
@@ -468,8 +527,37 @@ $xaml = @"
             </Grid>
         </Border>
 
-        <!-- Cards Area (in ScrollViewer) -->
-        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10" Padding="0,0,6,0">
+        <!-- 2: 目前網段資訊橫幅 (Subnet Information Banner) -->
+        <Border Grid.Row="2" Background="#1A2838" BorderBrush="#26486D" BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Subnet Info -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="🔍" FontSize="13" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="目前網路網段:" FontSize="12" FontWeight="SemiBold" Foreground="#60CDFF" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="TxtSubnetInfo" Text="192.168.1.0/24 (Wi-Fi)" FontSize="12" FontWeight="Bold" Foreground="#FFFFFF" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Local IP & Gateway Summary -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="本機 IP:" FontSize="11" Foreground="#999999" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="TxtLocalHostIP" Text="192.168.1.227" FontSize="11" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,0,14,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="預設閘道:" FontSize="11" Foreground="#999999" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="TxtGatewayIP" Text="192.168.1.1" FontSize="11" FontWeight="SemiBold" Foreground="#E0E0E0" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Re-detect Button -->
+                <Button x:Name="BtnRedetectSubnet" Grid.Column="2" Content="🔄 重新辨識網段" Style="{StaticResource FluentButtonStyle}" Padding="10,3" FontSize="11"/>
+            </Grid>
+        </Border>
+
+        <!-- 3: Cards Area (in ScrollViewer) -->
+        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10" Padding="0,0,6,0">
             <StackPanel>
                 <!-- Card 0: Internet (Google) -->
                 <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
@@ -554,7 +642,7 @@ $xaml = @"
                     </Grid>
                 </Border>
 
-                <!-- Card 1: Local Target 1 (Gateway) -->
+                <!-- Card 1: Local Target 1 (Gateway / 路由器) -->
                 <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -577,9 +665,9 @@ $xaml = @"
 
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="區域設備 #1 (Gateway)" FontSize="14" FontWeight="SemiBold" Foreground="#FFFFFF"/>
+                                    <TextBlock Text="區域設備 #1 (網段預設閘道)" FontSize="14" FontWeight="SemiBold" Foreground="#FFFFFF"/>
                                     <Border Background="#332414" BorderBrush="#6B491F" BorderThickness="1" CornerRadius="4" Margin="8,0,0,0" Padding="5,1">
-                                        <TextBlock Text="LAN 1" FontSize="9" FontWeight="Bold" Foreground="#FFB900"/>
+                                        <TextBlock Text="GATEWAY" FontSize="9" FontWeight="Bold" Foreground="#FFB900"/>
                                     </Border>
                                 </StackPanel>
                             </StackPanel>
@@ -643,7 +731,7 @@ $xaml = @"
                     </Grid>
                 </Border>
 
-                <!-- Card 2: Local Target 2 -->
+                <!-- Card 2: Local Target 2 (網段活躍設備 / 鄰近主機) -->
                 <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -666,9 +754,9 @@ $xaml = @"
 
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="區域設備 #2 (NAS / Switch)" FontSize="14" FontWeight="SemiBold" Foreground="#FFFFFF"/>
+                                    <TextBlock x:Name="TxtLocalTitle2" Text="區域設備 #2 (網段活躍設備)" FontSize="14" FontWeight="SemiBold" Foreground="#FFFFFF"/>
                                     <Border Background="#1C263A" BorderBrush="#2D4370" BorderThickness="1" CornerRadius="4" Margin="8,0,0,0" Padding="5,1">
-                                        <TextBlock Text="LAN 2" FontSize="9" FontWeight="Bold" Foreground="#4CC2FF"/>
+                                        <TextBlock Text="SUBNET #2" FontSize="9" FontWeight="Bold" Foreground="#4CC2FF"/>
                                     </Border>
                                 </StackPanel>
                             </StackPanel>
@@ -732,7 +820,7 @@ $xaml = @"
                     </Grid>
                 </Border>
 
-                <!-- Card 3: Local Target 3 -->
+                <!-- Card 3: Local Target 3 (本機實體網卡 IP / 備用設備) -->
                 <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,4">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -755,9 +843,9 @@ $xaml = @"
 
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="區域設備 #3 (DNS / Server)" FontSize="14" FontWeight="SemiBold" Foreground="#FFFFFF"/>
+                                    <TextBlock x:Name="TxtLocalTitle3" Text="區域設備 #3 (本機網卡實體 IP)" FontSize="14" FontWeight="SemiBold" Foreground="#FFFFFF"/>
                                     <Border Background="#291A30" BorderBrush="#593269" BorderThickness="1" CornerRadius="4" Margin="8,0,0,0" Padding="5,1">
-                                        <TextBlock Text="LAN 3" FontSize="9" FontWeight="Bold" Foreground="#D182FF"/>
+                                        <TextBlock Text="SUBNET #3" FontSize="9" FontWeight="Bold" Foreground="#D182FF"/>
                                     </Border>
                                 </StackPanel>
                             </StackPanel>
@@ -765,7 +853,7 @@ $xaml = @"
                             <!-- Inline IP Input -->
                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="目標 IP:" FontSize="12" Foreground="#A0A0A0" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBox x:Name="TxtLocalIP3" Width="140" Text="8.8.8.8" Style="{StaticResource FluentTextBoxStyle}" Margin="0,0,6,0"/>
+                                <TextBox x:Name="TxtLocalIP3" Width="140" Text="192.168.1.227" Style="{StaticResource FluentTextBoxStyle}" Margin="0,0,6,0"/>
                                 <Button x:Name="BtnApplyIP3" Content="套用" Style="{StaticResource AccentButtonStyle}" Padding="10,3"/>
                             </StackPanel>
 
@@ -823,8 +911,8 @@ $xaml = @"
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Activity Log -->
-        <Border Grid.Row="3" Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="12">
+        <!-- 4: Activity Log -->
+        <Border Grid.Row="4" Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="12">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -861,7 +949,7 @@ $xaml = @"
 # 5. 解析 XAML 生成視窗物件與控制項參照
 $window = [Windows.Markup.XamlReader]::Parse($xaml)
 
-# 取得主要控制項
+# 取得控制列項目
 $cmbInterval       = $window.FindName("CmbInterval")
 $chkSoundAlert     = $window.FindName("ChkSoundAlert")
 $btnPauseResume    = $window.FindName("BtnPauseResume")
@@ -875,18 +963,39 @@ $overallText       = $window.FindName("OverallText")
 $txtLog            = $window.FindName("TxtLog")
 $txtLogCounter     = $window.FindName("TxtLogCounter")
 
+# 網段資訊橫幅控制項
+$txtSubnetInfo     = $window.FindName("TxtSubnetInfo")
+$txtLocalHostIP    = $window.FindName("TxtLocalHostIP")
+$txtGatewayIP      = $window.FindName("TxtGatewayIP")
+$btnRedetectSubnet = $window.FindName("BtnRedetectSubnet")
+
 # 初始化 3 組 Local IP 輸入框與按鈕
 $txtLocalIP1       = $window.FindName("TxtLocalIP1")
 $btnApplyIP1       = $window.FindName("BtnApplyIP1")
-$txtLocalIP1.Text  = $detectedGateway
 
 $txtLocalIP2       = $window.FindName("TxtLocalIP2")
 $btnApplyIP2       = $window.FindName("BtnApplyIP2")
-$txtLocalIP2.Text  = $defaultLocal2
+$txtLocalTitle2    = $window.FindName("TxtLocalTitle2")
 
 $txtLocalIP3       = $window.FindName("TxtLocalIP3")
 $btnApplyIP3       = $window.FindName("BtnApplyIP3")
-$txtLocalIP3.Text  = $defaultLocal3
+$txtLocalTitle3    = $window.FindName("TxtLocalTitle3")
+
+# 套用初次偵測到的網段資訊
+$txtSubnetInfo.Text  = "$($detectedSubnet.Subnet) ($($detectedSubnet.InterfaceName))"
+$txtLocalHostIP.Text = $detectedSubnet.LocalIP
+$txtGatewayIP.Text   = $detectedSubnet.Gateway
+
+$txtLocalIP1.Text    = $detectedSubnet.Target1
+$txtLocalIP2.Text    = $detectedSubnet.Target2
+$txtLocalIP3.Text    = $detectedSubnet.Target3
+
+if ($detectedSubnet.Target2Desc) {
+    $txtLocalTitle2.Text = "區域設備 #2 ($($detectedSubnet.Target2Desc))"
+}
+if ($detectedSubnet.Target3Desc) {
+    $txtLocalTitle3.Text = "區域設備 #3 ($($detectedSubnet.Target3Desc))"
+}
 
 # 6. 目標卡片與統計物件映射表
 function New-TargetStat {
@@ -929,7 +1038,7 @@ $cardsMap = @{
         MinMax   = $window.FindName("TxtLocalMinMax1")
         Loss     = $window.FindName("TxtLocalLoss1")
         LastSeen = $window.FindName("TxtLocalLastSeen1")
-        Name     = "📡 區網 #1"
+        Name     = "📡 閘道 #1"
     }
     "Local2" = @{
         Pill     = $window.FindName("LocalStatusPill2")
@@ -940,7 +1049,7 @@ $cardsMap = @{
         MinMax   = $window.FindName("TxtLocalMinMax2")
         Loss     = $window.FindName("TxtLocalLoss2")
         LastSeen = $window.FindName("TxtLocalLastSeen2")
-        Name     = "💻 區網 #2"
+        Name     = "💻 設備 #2"
     }
     "Local3" = @{
         Pill     = $window.FindName("LocalStatusPill3")
@@ -951,7 +1060,7 @@ $cardsMap = @{
         MinMax   = $window.FindName("TxtLocalMinMax3")
         Loss     = $window.FindName("TxtLocalLoss3")
         LastSeen = $window.FindName("TxtLocalLastSeen3")
-        Name     = "🖥️ 區網 #3"
+        Name     = "🖥️ 本機 #3"
     }
 }
 
@@ -1121,7 +1230,34 @@ $txtLocalIP2.Add_KeyDown({ param($s, $e); if ($e.Key -eq [System.Windows.Input.K
 $btnApplyIP3.Add_Click({ Set-LocalTarget -index 3 -box $txtLocalIP3 })
 $txtLocalIP3.Add_KeyDown({ param($s, $e); if ($e.Key -eq [System.Windows.Input.Key]::Enter) { Set-LocalTarget -index 3 -box $txtLocalIP3 } })
 
-# 11. 事件：偵測間隔變更
+# 11. 事件：重新偵測當前網段
+$btnRedetectSubnet.Add_Click({
+    $newSubnet = Get-CurrentSubnetInfo
+    $txtSubnetInfo.Text  = "$($newSubnet.Subnet) ($($newSubnet.InterfaceName))"
+    $txtLocalHostIP.Text = $newSubnet.LocalIP
+    $txtGatewayIP.Text   = $newSubnet.Gateway
+
+    $txtLocalIP1.Text    = $newSubnet.Target1
+    $txtLocalIP2.Text    = $newSubnet.Target2
+    $txtLocalIP3.Text    = $newSubnet.Target3
+
+    $runner.LocalTarget1 = $newSubnet.Target1
+    $runner.LocalTarget2 = $newSubnet.Target2
+    $runner.LocalTarget3 = $newSubnet.Target3
+
+    if ($newSubnet.Target2Desc) { $txtLocalTitle2.Text = "區域設備 #2 ($($newSubnet.Target2Desc))" }
+    if ($newSubnet.Target3Desc) { $txtLocalTitle3.Text = "區域設備 #3 ($($newSubnet.Target3Desc))" }
+
+    # 重置 3 個 Local 目標統計
+    Reset-TargetStats -stats $statsMap["Local1"]
+    Reset-TargetStats -stats $statsMap["Local2"]
+    Reset-TargetStats -stats $statsMap["Local3"]
+
+    Add-LogLine -line "🔍 【網段重整】成功辨識網段: $($newSubnet.Subnet) ($($newSubnet.InterfaceName))"
+    Add-LogLine -line "📡 已同步更新區網監控目標: $($newSubnet.Target1) / $($newSubnet.Target2) / $($newSubnet.Target3)"
+})
+
+# 12. 事件：偵測間隔變更
 $cmbInterval.Add_SelectionChanged({
     $selectedItem = $cmbInterval.SelectedItem
     if ($selectedItem -and $selectedItem.Tag) {
@@ -1131,7 +1267,7 @@ $cmbInterval.Add_SelectionChanged({
     }
 })
 
-# 12. 事件：暫停 / 繼續偵測
+# 13. 事件：暫停 / 繼續偵測
 $btnPauseResume.Add_Click({
     if ($runner.IsRunning) {
         $runner.Stop()
@@ -1154,7 +1290,7 @@ $btnPauseResume.Add_Click({
     }
 })
 
-# 13. 事件：重置統計
+# 14. 事件：重置統計
 $btnResetStats.Add_Click({
     foreach ($key in $statsMap.Keys) {
         Reset-TargetStats -stats $statsMap[$key]
@@ -1166,14 +1302,14 @@ $btnResetStats.Add_Click({
     Add-LogLine -line "🔄 【重置統計】所有目標歷史延遲與遺失率計數已歸零"
 })
 
-# 14. 事件：清除日誌
+# 15. 事件：清除日誌
 $btnClearLog.Add_Click({
     $logEntries.Clear()
     $txtLog.Text = ""
     $txtLogCounter.Text = "(0 / $maxLogLines 筆)"
 })
 
-# 15. 視窗載入完成套用 Windows 11 Fluent 深色標題列與圓角
+# 16. 視窗載入完成套用 Windows 11 Fluent 深色標題列與圓角
 $window.Add_SourceInitialized({
     try {
         $helper = New-Object System.Windows.Interop.WindowInteropHelper($window)
@@ -1181,17 +1317,18 @@ $window.Add_SourceInitialized({
     } catch { }
 })
 
-# 16. 視窗關閉時終止背景執行緒
+# 17. 視窗關閉時終止背景執行緒
 $window.Add_Closing({
     $runner.Stop()
 })
 
-# 17. 啟動監控並顯示視窗
-Add-LogLine -line "🚀 Fluent Network Sentinel 已啟動 (4 組目標同步監控)"
+# 18. 啟動監控並顯示視窗
+Add-LogLine -line "🚀 Fluent Network Sentinel 已啟動"
+Add-LogLine -line "🔍 偵測到目前網段: $($detectedSubnet.Subnet) ($($detectedSubnet.InterfaceName))"
 Add-LogLine -line "🌐 網際網路目標: www.google.com"
-Add-LogLine -line "📡 區域目標 #1: $($txtLocalIP1.Text)"
-Add-LogLine -line "💻 區域目標 #2: $($txtLocalIP2.Text)"
-Add-LogLine -line "🖥️ 區域目標 #3: $($txtLocalIP3.Text)"
+Add-LogLine -line "📡 閘道目標 #1: $($detectedSubnet.Target1)"
+Add-LogLine -line "💻 設備目標 #2: $($detectedSubnet.Target2) ($($detectedSubnet.Target2Desc))"
+Add-LogLine -line "🖥️ 本機目標 #3: $($detectedSubnet.Target3) ($($detectedSubnet.Target3Desc))"
 
 $runner.Start($window.Dispatcher)
 $null = $window.ShowDialog()
