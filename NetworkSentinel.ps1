@@ -931,7 +931,7 @@ $xaml = @"
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                        <TextBlock x:Name="TxtActivityFeedTitle" Text="📋 即時偵測日誌 (Activity Feed)" FontSize="12" FontWeight="SemiBold" Foreground="#D0D0D0"/>
+                        <TextBlock x:Name="TxtActivityFeedTitle" Text="📋 即時偵測日誌 (滿 100 筆自動清除)" FontSize="12" FontWeight="SemiBold" Foreground="#D0D0D0"/>
                         <TextBlock x:Name="TxtLogCounter" Text="(最新 100 筆)" FontSize="11" Foreground="#777777" Margin="6,1,0,0"/>
                     </StackPanel>
 
@@ -1125,7 +1125,7 @@ $i18n = @{
         LossRate         = "遺失率 (Lost/Total)"
         LastSeen         = "最後回應時間"
         Waiting          = "等待回應..."
-        ActivityFeed     = "📋 即時偵測日誌 (Activity Feed)"
+        ActivityFeed     = "📋 即時偵測日誌 (滿 100 筆自動清除)"
         ClearLog         = "清除日誌"
         Target1Title     = "區域設備 #1 (網段預設閘道)"
         Target2Title     = "區域設備 #2 ($($detectedSubnet.Target2Desc))"
@@ -1164,7 +1164,7 @@ $i18n = @{
         LossRate         = "Packet Loss"
         LastSeen         = "Last Seen"
         Waiting          = "Waiting..."
-        ActivityFeed     = "📋 Real-time Activity Feed"
+        ActivityFeed     = "📋 Activity Feed (Auto-clears at 100)"
         ClearLog         = "Clear Log"
         Target1Title     = "Local #1 (Default Gateway)"
         Target2Title     = "Local #2 (Active Subnet Node)"
@@ -1247,15 +1247,24 @@ function Apply-Language {
     $txtLogCounter.Text = "($($dict.LogCountPrefix) $($logEntries.Count) / $maxLogLines $($dict.LogCountSuffix))"
 }
 
-# 8. 輔助函式：新增日誌
+# 8. 輔助函式：新增日誌 (滿 100 筆後自動清空)
 function Add-LogLine {
     param([string]$line)
     $timestamp = (Get-Date).ToString("HH:mm:ss")
     $formatted = "[$timestamp] $line"
-    $logEntries.Add($formatted)
-    if ($logEntries.Count -gt $maxLogLines) {
-        $logEntries.RemoveAt(0)
+
+    # 當日誌累積達到 100 筆上限時，自動清空日誌快取
+    if ($logEntries.Count -ge $maxLogLines) {
+        $logEntries.Clear()
+        $clearNotice = if ($script:currentLang -eq "zh") {
+            "[$timestamp] 🧹 【自動清除】日誌已累積滿 $maxLogLines 筆，已自動清空重啟"
+        } else {
+            "[$timestamp] 🧹 [Auto Clear] Log reached $maxLogLines entries and was automatically cleared"
+        }
+        $logEntries.Add($clearNotice)
     }
+
+    $logEntries.Add($formatted)
     $txtLog.Text = [string]::Join("`r`n", $logEntries)
     $txtLog.ScrollToEnd()
     $dict = $i18n[$script:currentLang]
