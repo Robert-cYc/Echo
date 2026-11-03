@@ -460,6 +460,28 @@ $xaml = @"
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Modern Dark ToolTip Style -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="#222222"/>
+            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="BorderBrush" Value="#444444"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI, Microsoft JhengHei UI"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="#202020" BorderBrush="#404040" BorderThickness="1" CornerRadius="6" Padding="14,12" SnapsToDevicePixels="True">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.6" Color="#000000"/>
+                            </Border.Effect>
+                            <ContentPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid Margin="18">
@@ -644,23 +666,23 @@ $xaml = @"
                         </Grid>
 
                         <!-- Sparkline Mini Graph -->
-                        <Grid Grid.Row="2" Margin="0,6,0,0">
+                        <Grid x:Name="GridSparkline0" Grid.Row="2" Margin="0,6,0,0" ToolTipService.ShowDuration="60000" ToolTipService.InitialShowDelay="150">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline0" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="LblSparkline0" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0" Cursor="Help"/>
 
-                            <Border Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
+                            <Border x:Name="BorderSparkline0" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True" Cursor="Help">
                                 <Canvas x:Name="CanvasSparkline0" Height="24" ClipToBounds="True">
                                     <Polygon x:Name="FillSparkline0" Fill="#184CC2FF" StrokeThickness="0"/>
                                     <Polyline x:Name="LineSparkline0" Stroke="#60CDFF" StrokeThickness="1.5"/>
                                 </Canvas>
                             </Border>
 
-                            <TextBlock x:Name="TxtJitter0" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                            <TextBlock x:Name="TxtJitter0" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0" Cursor="Help"/>
                         </Grid>
                     </Grid>
                 </Border>
@@ -754,23 +776,23 @@ $xaml = @"
                         </Grid>
 
                         <!-- Sparkline Mini Graph -->
-                        <Grid Grid.Row="2" Margin="0,6,0,0">
+                        <Grid x:Name="GridSparkline1" Grid.Row="2" Margin="0,6,0,0" ToolTipService.ShowDuration="60000" ToolTipService.InitialShowDelay="150">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline1" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="LblSparkline1" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0" Cursor="Help"/>
 
-                            <Border Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
+                            <Border x:Name="BorderSparkline1" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True" Cursor="Help">
                                 <Canvas x:Name="CanvasSparkline1" Height="24" ClipToBounds="True">
                                     <Polygon x:Name="FillSparkline1" Fill="#184CC2FF" StrokeThickness="0"/>
                                     <Polyline x:Name="LineSparkline1" Stroke="#60CDFF" StrokeThickness="1.5"/>
                                 </Canvas>
                             </Border>
 
-                            <TextBlock x:Name="TxtJitter1" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                            <TextBlock x:Name="TxtJitter1" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0" Cursor="Help"/>
                         </Grid>
                     </Grid>
                 </Border>
@@ -864,23 +886,23 @@ $xaml = @"
                         </Grid>
 
                         <!-- Sparkline Mini Graph -->
-                        <Grid Grid.Row="2" Margin="0,6,0,0">
+                        <Grid x:Name="GridSparkline2" Grid.Row="2" Margin="0,6,0,0" ToolTipService.ShowDuration="60000" ToolTipService.InitialShowDelay="150">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline2" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="LblSparkline2" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0" Cursor="Help"/>
 
-                            <Border Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
+                            <Border x:Name="BorderSparkline2" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True" Cursor="Help">
                                 <Canvas x:Name="CanvasSparkline2" Height="24" ClipToBounds="True">
                                     <Polygon x:Name="FillSparkline2" Fill="#184CC2FF" StrokeThickness="0"/>
                                     <Polyline x:Name="LineSparkline2" Stroke="#60CDFF" StrokeThickness="1.5"/>
                                 </Canvas>
                             </Border>
 
-                            <TextBlock x:Name="TxtJitter2" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                            <TextBlock x:Name="TxtJitter2" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0" Cursor="Help"/>
                         </Grid>
                     </Grid>
                 </Border>
@@ -974,23 +996,23 @@ $xaml = @"
                         </Grid>
 
                         <!-- Sparkline Mini Graph -->
-                        <Grid Grid.Row="2" Margin="0,6,0,0">
+                        <Grid x:Name="GridSparkline3" Grid.Row="2" Margin="0,6,0,0" ToolTipService.ShowDuration="60000" ToolTipService.InitialShowDelay="150">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline3" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="LblSparkline3" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0" Cursor="Help"/>
 
-                            <Border Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
+                            <Border x:Name="BorderSparkline3" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True" Cursor="Help">
                                 <Canvas x:Name="CanvasSparkline3" Height="24" ClipToBounds="True">
                                     <Polygon x:Name="FillSparkline3" Fill="#184CC2FF" StrokeThickness="0"/>
                                     <Polyline x:Name="LineSparkline3" Stroke="#60CDFF" StrokeThickness="1.5"/>
                                 </Canvas>
                             </Border>
 
-                            <TextBlock x:Name="TxtJitter3" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                            <TextBlock x:Name="TxtJitter3" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0" Cursor="Help"/>
                         </Grid>
                     </Grid>
                 </Border>
@@ -1098,6 +1120,15 @@ $minMaxLabels      = @($window.FindName("LblMinMax0"), $window.FindName("LblMinM
 $lossLabels        = @($window.FindName("LblLoss0"), $window.FindName("LblLoss1"), $window.FindName("LblLoss2"), $window.FindName("LblLoss3"))
 $lastSeenLabels    = @($window.FindName("LblLastSeen0"), $window.FindName("LblLastSeen1"), $window.FindName("LblLastSeen2"), $window.FindName("LblLastSeen3"))
 $sparklineLabels   = @($window.FindName("LblSparkline0"), $window.FindName("LblSparkline1"), $window.FindName("LblSparkline2"), $window.FindName("LblSparkline3"))
+
+# 走勢圖與抖動指標元素 (供滑鼠暫留顯示 Ping / Jitter 說明 ToolTip)
+$sparkElements     = @(
+    $window.FindName("GridSparkline0"), $window.FindName("GridSparkline1"), $window.FindName("GridSparkline2"), $window.FindName("GridSparkline3"),
+    $window.FindName("BorderSparkline0"), $window.FindName("BorderSparkline1"), $window.FindName("BorderSparkline2"), $window.FindName("BorderSparkline3"),
+    $window.FindName("CanvasSparkline0"), $window.FindName("CanvasSparkline1"), $window.FindName("CanvasSparkline2"), $window.FindName("CanvasSparkline3"),
+    $window.FindName("LblSparkline0"), $window.FindName("LblSparkline1"), $window.FindName("LblSparkline2"), $window.FindName("LblSparkline3"),
+    $window.FindName("TxtJitter0"), $window.FindName("TxtJitter1"), $window.FindName("TxtJitter2"), $window.FindName("TxtJitter3")
+)
 
 # 套用初次偵測到的網段資訊
 $txtSubnetInfo.Text  = "$($detectedSubnet.Subnet) ($($detectedSubnet.InterfaceName))"
@@ -1259,6 +1290,21 @@ $i18n = @{
         ToastDropMsg     = "已失去連線！請檢查網路設定。"
         ToastRecTitle    = "✅ 網路已恢復連線"
         ToastRecMsg      = "已重新連線成功！"
+        SparklineToolTip = @"
+1. Ping 值（網路延遲，單位：毫秒 ms）
+Ping 代表資料從你的裝置傳送到伺服器、再傳回來的來回時間。數值越低越好。
+0 – 20 ms：極佳（適合電競、4K 影音串流）
+21 – 50 ms：正常 / 良好（大部分線上遊戲、日常使用都很順暢）
+51 – 100 ms：普通（玩快節奏射擊遊戲會有一點點不跟手，但勉強可玩）
+100 ms 以上：差 / 爆 Ping（會出現畫面卡頓、角色瞬移、按技能沒反應）
+
+2. Jitter（抖動值，單位：毫秒 ms）
+Jitter 代表 Ping 值的穩定度與波動幅度（例如一秒測出來是 20ms，下一秒變 50ms，抖動就是 30ms）。對即時對戰遊戲來說，穩定的高 Ping 比不穩定的低 Ping 更好打。
+0 – 5 ms：極佳、極度穩定
+5 – 15 ms：正常範圍，波動不明顯
+15 ms 以上：開始不穩，容易造成遊戲中「瞬移」、「子彈判定吃掉」或語音斷斷續續
+30 ms 以上：嚴重抖動，網路品質不佳
+"@
     }
     "en" = @{
         AppTitle         = "Network Sentinel - Fluent Network Monitor"
@@ -1308,6 +1354,21 @@ $i18n = @{
         ToastDropMsg     = "connection lost! Please check network settings."
         ToastRecTitle    = "✅ Network Restored"
         ToastRecMsg      = "connection back online!"
+        SparklineToolTip = @"
+1. Ping (Latency, Unit: ms)
+Round-trip time for packets sent to the server and back. Lower is better.
+0 – 20 ms: Excellent (Ideal for esports, 4K streaming)
+21 – 50 ms: Good / Normal (Smooth for online gaming & daily browsing)
+51 – 100 ms: Fair (Slight input lag in fast-paced FPS, but playable)
+100+ ms: Poor / Lagging (Stutter, teleporting, delayed inputs)
+
+2. Jitter (Unit: ms)
+Variation and stability of Ping latency over time (e.g. 20ms then 50ms = 30ms jitter). A stable ping is preferred over volatile latency.
+0 – 5 ms: Excellent, rock solid
+5 – 15 ms: Normal, barely noticeable fluctuation
+15+ ms: Unstable, causes rubber-banding or audio dropouts
+30+ ms: Severe jitter, poor connection quality
+"@
     }
 }
 
@@ -1449,6 +1510,13 @@ function Apply-Language {
     $lossLabels      | ForEach-Object { $_.Text = $dict.LossRate }
     $lastSeenLabels  | ForEach-Object { $_.Text = $dict.LastSeen }
     $sparklineLabels | ForEach-Object { $_.Text = $dict.SparklineLabel }
+
+    # 更新趨勢圖與指標 ToolTip 說明
+    $sparkElements | ForEach-Object {
+        if ($_) {
+            $_.ToolTip = $dict.SparklineToolTip
+        }
+    }
 
     foreach ($k in $cardsMap.Keys) {
         $c = $cardsMap[$k]
