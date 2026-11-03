@@ -1,20 +1,21 @@
 ﻿<#
 .SYNOPSIS
-    Fluent Network Sentinel - Windows 11 Fluent UI 即時網路狀態監控工具 (中英文切換版)
+    Fluent Network Sentinel - Windows 11 Fluent UI 即時網路狀態監控工具 (走勢圖 + 系統匣強化版)
 .DESCRIPTION
     PowerShell + WPF 設計的 Windows 11 Fluent UI 網路連線監控程式。
+    - 即時延遲走勢迷你圖 (Sparkline) 與網路抖動率 (Jitter) 計算
+    - 支援縮小至系統匣 (System Tray / 托盤常駐) 與 Windows 11 原生彈窗通知 (Toast/Balloon)
     - 支援中英文即時動態雙語切換 (繁體中文 / English)
     - 先自動偵測目前作用中的網路介面與網段 (Subnet / Gateway / Local IP)
     - 自動提取當前網段內的閘道、活躍鄰近設備與本機 IP 進行並行 Ping 監控
     - 同步持續監控外部網際網路 (www.google.com)
     - 3 組區域網路設備 IP 均支援隨時自訂修改 (Enter 或點擊套用)
-    - 提供連線延遲 (目前/平均/最小/最大)、封包遺失率、回應歷史日誌
-    - 支援調整偵測間隔 (1s ~ 5s，黑底白字 Fluent 風格)、暫停/繼續、重置統計、重新偵測網段與斷線音效提示
+    - 連線延遲、封包遺失率、滿 100 筆自動清除日誌
     - 採用非同步 Background Ping 機制，UI 介面完全不卡頓
 #>
 
-# 1. 載入 WPF 與 Windows 系統組件
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Drawing
+# 1. 載入 WPF、Windows Forms 與系統繪圖組件
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Drawing, System.Windows.Forms
 
 # 2. 定義非同步 Ping 與 DWM 視窗修飾 C# 類別 (相容 .NET Framework 與 PowerShell 5.1/7+)
 $csharpSource = @"
@@ -205,16 +206,12 @@ function Get-CurrentSubnetInfo {
                 $info.PrefixLength = $netIP.PrefixLength
             }
 
-            # 分析 IPv4 網段前綴
             $ipParts = $info.LocalIP.Split('.')
             if ($ipParts.Count -eq 4) {
                 $prefix3 = "$($ipParts[0]).$($ipParts[1]).$($ipParts[2])"
                 $info.Subnet = "$prefix3.0/$($info.PrefixLength)"
-                
-                # 目標 1：網段預設閘道 (Gateway / 路由器)
                 $info.Target1 = $info.Gateway
 
-                # 目標 2：同網段內已探測到的活躍設備 (Neighbor) 或網段 .2
                 $neighbors = Get-NetNeighbor -InterfaceIndex $netConfig.InterfaceIndex -AddressFamily IPv4 -State Reachable -ErrorAction SilentlyContinue |
                              Where-Object { 
                                  $_.IPAddress -ne $info.Gateway -and 
@@ -232,7 +229,6 @@ function Get-CurrentSubnetInfo {
                     $info.Target2Desc = "網段主機 #2"
                 }
 
-                # 目標 3：本機實體 IP 或網段 .254
                 if ($info.LocalIP -and $info.LocalIP -ne $info.Target1 -and $info.LocalIP -ne $info.Target2) {
                     $info.Target3 = $info.LocalIP
                     $info.Target3Desc = "本機實體 IP"
@@ -250,12 +246,12 @@ function Get-CurrentSubnetInfo {
 # 執行初次網段偵測
 $detectedSubnet = Get-CurrentSubnetInfo
 
-# 4. Windows 11 Fluent UI XAML 定義
+# 4. Windows 11 Fluent UI XAML 定義 (含 Sparkline 走勢圖與系統匣整合按鈕)
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Network Sentinel - Fluent Network Monitor"
-        Height="890" Width="820" MinHeight="740" MinWidth="750"
+        Height="900" Width="830" MinHeight="750" MinWidth="760"
         WindowStartupLocation="CenterScreen"
         Background="#181818"
         Foreground="#EDEDED"
@@ -268,7 +264,7 @@ $xaml = @"
             <Setter Property="Foreground" Value="#FFFFFF"/>
             <Setter Property="BorderBrush" Value="#3D3D3D"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="Padding" Value="11,4"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="FontSize" Value="12"/>
@@ -467,17 +463,17 @@ $xaml = @"
         </Style>
     </Window.Resources>
 
-    <Grid Margin="20">
+    <Grid Margin="18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/> <!-- 0: Header -->
             <RowDefinition Height="Auto"/> <!-- 1: Controls Toolbar -->
             <RowDefinition Height="Auto"/> <!-- 2: Subnet Information Banner -->
             <RowDefinition Height="*"/>    <!-- 3: Cards Area (ScrollViewer) -->
-            <RowDefinition Height="170"/>  <!-- 4: Activity Feed -->
+            <RowDefinition Height="165"/>  <!-- 4: Activity Feed -->
         </Grid.RowDefinitions>
 
         <!-- 0: Header -->
-        <Grid Grid.Row="0" Margin="0,0,0,12">
+        <Grid Grid.Row="0" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
@@ -499,10 +495,11 @@ $xaml = @"
             </Border>
         </Grid>
 
-        <!-- 1: Controls Toolbar (含中英文切換鈕) -->
+        <!-- 1: Controls Toolbar (含中英文切換與系統匣控制) -->
         <Border Grid.Row="1" Background="#202020" BorderBrush="#2E2E2E" BorderThickness="1" CornerRadius="6" Padding="12,6" Margin="0,0,0,10">
             <Grid>
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
@@ -510,9 +507,9 @@ $xaml = @"
                 </Grid.ColumnDefinitions>
 
                 <!-- Interval -->
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
-                    <TextBlock x:Name="TxtIntervalLabel" Text="偵測間隔:" VerticalAlignment="Center" FontSize="12" Foreground="#B0B0B0" Margin="0,0,8,0"/>
-                    <ComboBox x:Name="CmbInterval" Style="{StaticResource FluentComboBoxStyle}" SelectedIndex="0" Width="130" Height="28">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0">
+                    <TextBlock x:Name="TxtIntervalLabel" Text="偵測間隔:" VerticalAlignment="Center" FontSize="12" Foreground="#B0B0B0" Margin="0,0,6,0"/>
+                    <ComboBox x:Name="CmbInterval" Style="{StaticResource FluentComboBoxStyle}" SelectedIndex="0" Width="125" Height="28">
                         <ComboBoxItem x:Name="CmbItem1" Content="1 秒 (1000ms)" Tag="1000"/>
                         <ComboBoxItem x:Name="CmbItem2" Content="2 秒 (2000ms)" Tag="2000"/>
                         <ComboBoxItem x:Name="CmbItem3" Content="3 秒 (3000ms)" Tag="3000"/>
@@ -521,19 +518,23 @@ $xaml = @"
                 </StackPanel>
 
                 <!-- Sound Alert -->
-                <CheckBox x:Name="ChkSoundAlert" Grid.Column="1" Content="斷線警報音效" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,16,0" Cursor="Hand"/>
+                <CheckBox x:Name="ChkSoundAlert" Grid.Column="1" Content="斷線警報音效" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,12,0" Cursor="Hand"/>
 
-                <!-- Right Action Buttons (包含語言切換) -->
-                <StackPanel Grid.Column="3" Orientation="Horizontal">
-                    <Button x:Name="BtnToggleLang" Content="🌐 English" Style="{StaticResource FluentButtonStyle}" Margin="0,0,8,0" Padding="10,3"/>
-                    <Button x:Name="BtnPauseResume" Content="暫停偵測" Style="{StaticResource FluentButtonStyle}" Margin="0,0,8,0" Padding="12,3"/>
-                    <Button x:Name="BtnResetStats" Content="重置所有統計" Style="{StaticResource FluentButtonStyle}" Padding="12,3"/>
+                <!-- Min to Tray Checkbox -->
+                <CheckBox x:Name="ChkMinToTray" Grid.Column="2" Content="關閉時縮小至系統匣" IsChecked="True" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,10,0" Cursor="Hand"/>
+
+                <!-- Right Action Buttons -->
+                <StackPanel Grid.Column="4" Orientation="Horizontal">
+                    <Button x:Name="BtnMinimizeTray" Content="📥 縮至系統匣" Style="{StaticResource FluentButtonStyle}" Margin="0,0,6,0" Padding="8,3"/>
+                    <Button x:Name="BtnToggleLang" Content="🌐 English" Style="{StaticResource FluentButtonStyle}" Margin="0,0,6,0" Padding="8,3"/>
+                    <Button x:Name="BtnPauseResume" Content="暫停偵測" Style="{StaticResource FluentButtonStyle}" Margin="0,0,6,0" Padding="8,3"/>
+                    <Button x:Name="BtnResetStats" Content="重置統計" Style="{StaticResource FluentButtonStyle}" Padding="8,3"/>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- 2: 目前網段資訊橫幅 (Subnet Information Banner) -->
-        <Border Grid.Row="2" Background="#1A2838" BorderBrush="#26486D" BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,0,0,10">
+        <!-- 2: 目前網段資訊橫幅 -->
+        <Border Grid.Row="2" Background="#1A2838" BorderBrush="#26486D" BorderThickness="1" CornerRadius="6" Padding="12,6" Margin="0,0,0,10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -541,14 +542,12 @@ $xaml = @"
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Subnet Info -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
                     <TextBlock Text="🔍" FontSize="13" Margin="0,0,6,0" VerticalAlignment="Center"/>
                     <TextBlock x:Name="TxtSubnetLabel" Text="目前網路網段:" FontSize="12" FontWeight="SemiBold" Foreground="#60CDFF" VerticalAlignment="Center"/>
                     <TextBlock x:Name="TxtSubnetInfo" Text="192.168.1.0/24 (Wi-Fi)" FontSize="12" FontWeight="Bold" Foreground="#FFFFFF" Margin="6,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
 
-                <!-- Local IP & Gateway Summary -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock x:Name="TxtLocalHostLabel" Text="本機 IP:" FontSize="11" Foreground="#999999" Margin="0,0,4,0" VerticalAlignment="Center"/>
                     <TextBlock x:Name="TxtLocalHostIP" Text="192.168.1.227" FontSize="11" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,0,14,0" VerticalAlignment="Center"/>
@@ -556,24 +555,24 @@ $xaml = @"
                     <TextBlock x:Name="TxtGatewayIP" Text="192.168.1.1" FontSize="11" FontWeight="SemiBold" Foreground="#E0E0E0" VerticalAlignment="Center"/>
                 </StackPanel>
 
-                <!-- Re-detect Button -->
-                <Button x:Name="BtnRedetectSubnet" Grid.Column="2" Content="🔄 重新辨識網段" Style="{StaticResource FluentButtonStyle}" Padding="10,3" FontSize="11"/>
+                <Button x:Name="BtnRedetectSubnet" Grid.Column="2" Content="🔄 重新辨識網段" Style="{StaticResource FluentButtonStyle}" Padding="10,2" FontSize="11"/>
             </Grid>
         </Border>
 
-        <!-- 3: Cards Area (in ScrollViewer) -->
-        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10" Padding="0,0,6,0">
+        <!-- 3: Cards Area (含 Sparkline 走勢圖) -->
+        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" Margin="0,0,0,8" Padding="0,0,6,0">
             <StackPanel>
                 <!-- Card 0: Internet (Google) -->
-                <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
+                <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,9" Margin="0,0,0,9">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/> <!-- Sparkline Row -->
                         </Grid.RowDefinitions>
 
                         <!-- Header -->
-                        <Grid Grid.Row="0" Margin="0,0,0,8">
+                        <Grid Grid.Row="0" Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
@@ -581,13 +580,13 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="6" Background="#162E44" Margin="0,0,10,0">
-                                <TextBlock Text="🌐" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Border Grid.Column="0" Width="30" Height="30" CornerRadius="6" Background="#162E44" Margin="0,0,10,0">
+                                <TextBlock Text="🌐" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
 
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock x:Name="TxtInternetTitle" Text="網際網路 (Internet)" FontSize="14" FontWeight="SemiBold" Foreground="#FFFFFF"/>
+                                    <TextBlock x:Name="TxtInternetTitle" Text="網際網路 (Internet)" FontSize="13.5" FontWeight="SemiBold" Foreground="#FFFFFF"/>
                                     <Border Background="#1C2F20" BorderBrush="#2F5C37" BorderThickness="1" CornerRadius="4" Margin="8,0,0,0" Padding="5,1">
                                         <TextBlock Text="WAN" FontSize="9" FontWeight="Bold" Foreground="#6CCB5F"/>
                                     </Border>
@@ -606,57 +605,78 @@ $xaml = @"
                         <!-- Metrics Grid -->
                         <Grid Grid.Row="1">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="135"/>
+                                <ColumnDefinition Width="130"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
-                            <Border Grid.Column="0" Background="#1D1D1D" CornerRadius="5" Padding="10,6" Margin="0,0,6,0">
+                            <Border Grid.Column="0" Background="#1D1D1D" CornerRadius="5" Padding="10,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLatency0" Text="目前延遲" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtGoogleLatency" Text="-- ms" FontSize="18" FontWeight="Bold" Foreground="#60CDFF" Margin="0,2,0,0"/>
+                                    <TextBlock x:Name="TxtGoogleLatency" Text="-- ms" FontSize="17" FontWeight="Bold" Foreground="#60CDFF" Margin="0,1,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="1" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="1" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblAvg0" Text="平均延遲" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtGoogleAvg" Text="-- ms" FontSize="13" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtGoogleAvg" Text="-- ms" FontSize="12.5" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="2" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="2" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblMinMax0" Text="最小 / 最大" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtGoogleMinMax" Text="-- / --" FontSize="12" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtGoogleMinMax" Text="-- / --" FontSize="11.5" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="3" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="3" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLoss0" Text="遺失率 (Lost/Total)" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtGoogleLoss" Text="0.0% (0/0)" FontSize="12" FontWeight="SemiBold" Foreground="#6CCB5F" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtGoogleLoss" Text="0.0% (0/0)" FontSize="11.5" FontWeight="SemiBold" Foreground="#6CCB5F" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="4" Background="#1D1D1D" CornerRadius="5" Padding="8,6">
+                            <Border Grid.Column="4" Background="#1D1D1D" CornerRadius="5" Padding="8,5">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLastSeen0" Text="最後回應時間" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtGoogleLastSeen" Text="等待回應..." FontSize="11" FontWeight="SemiBold" Foreground="#B0B0B0" Margin="0,4,0,0"/>
+                                    <TextBlock x:Name="TxtGoogleLastSeen" Text="等待回應..." FontSize="11" FontWeight="SemiBold" Foreground="#B0B0B0" Margin="0,3,0,0"/>
                                 </StackPanel>
                             </Border>
+                        </Grid>
+
+                        <!-- Sparkline Mini Graph -->
+                        <Grid Grid.Row="2" Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock x:Name="LblSparkline0" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+
+                            <Border Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
+                                <Canvas x:Name="CanvasSparkline0" Height="24" ClipToBounds="True">
+                                    <Polygon x:Name="FillSparkline0" Fill="#184CC2FF" StrokeThickness="0"/>
+                                    <Polyline x:Name="LineSparkline0" Stroke="#60CDFF" StrokeThickness="1.5"/>
+                                </Canvas>
+                            </Border>
+
+                            <TextBlock x:Name="TxtJitter0" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
                     </Grid>
                 </Border>
 
                 <!-- Card 1: Local Target 1 (Gateway / 路由器) -->
-                <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
+                <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,9" Margin="0,0,0,9">
                     <Grid>
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
                         <!-- Header & Input Bar -->
-                        <Grid Grid.Row="0" Margin="0,0,0,8">
+                        <Grid Grid.Row="0" Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
@@ -664,13 +684,13 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="6" Background="#3B2614" Margin="0,0,10,0">
-                                <TextBlock Text="📡" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Border Grid.Column="0" Width="30" Height="30" CornerRadius="6" Background="#3B2614" Margin="0,0,10,0">
+                                <TextBlock Text="📡" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
 
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock x:Name="TxtLocalTitle1" Text="區域設備 #1 (網段預設閘道)" FontSize="14" FontWeight="SemiBold" Foreground="#FFFFFF"/>
+                                    <TextBlock x:Name="TxtLocalTitle1" Text="區域設備 #1 (網段預設閘道)" FontSize="13.5" FontWeight="SemiBold" Foreground="#FFFFFF"/>
                                     <Border Background="#332414" BorderBrush="#6B491F" BorderThickness="1" CornerRadius="4" Margin="8,0,0,0" Padding="5,1">
                                         <TextBlock Text="GATEWAY" FontSize="9" FontWeight="Bold" Foreground="#FFB900"/>
                                     </Border>
@@ -680,7 +700,7 @@ $xaml = @"
                             <!-- Inline IP Input -->
                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock x:Name="TxtLocalIPLabel1" Text="目標 IP:" FontSize="12" Foreground="#A0A0A0" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBox x:Name="TxtLocalIP1" Width="140" Text="192.168.1.1" Style="{StaticResource FluentTextBoxStyle}" Margin="0,0,6,0"/>
+                                <TextBox x:Name="TxtLocalIP1" Width="135" Text="192.168.1.1" Style="{StaticResource FluentTextBoxStyle}" Margin="0,0,6,0"/>
                                 <Button x:Name="BtnApplyIP1" Content="套用" Style="{StaticResource AccentButtonStyle}" Padding="10,3"/>
                             </StackPanel>
 
@@ -695,57 +715,78 @@ $xaml = @"
                         <!-- Metrics Grid -->
                         <Grid Grid.Row="1">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="135"/>
+                                <ColumnDefinition Width="130"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
-                            <Border Grid.Column="0" Background="#1D1D1D" CornerRadius="5" Padding="10,6" Margin="0,0,6,0">
+                            <Border Grid.Column="0" Background="#1D1D1D" CornerRadius="5" Padding="10,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLatency1" Text="目前延遲" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalLatency1" Text="-- ms" FontSize="18" FontWeight="Bold" Foreground="#60CDFF" Margin="0,2,0,0"/>
+                                    <TextBlock x:Name="TxtLocalLatency1" Text="-- ms" FontSize="17" FontWeight="Bold" Foreground="#60CDFF" Margin="0,1,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="1" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="1" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblAvg1" Text="平均延遲" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalAvg1" Text="-- ms" FontSize="13" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtLocalAvg1" Text="-- ms" FontSize="12.5" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="2" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="2" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblMinMax1" Text="最小 / 最大" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalMinMax1" Text="-- / --" FontSize="12" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtLocalMinMax1" Text="-- / --" FontSize="11.5" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="3" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="3" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLoss1" Text="遺失率 (Lost/Total)" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalLoss1" Text="0.0% (0/0)" FontSize="12" FontWeight="SemiBold" Foreground="#6CCB5F" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtLocalLoss1" Text="0.0% (0/0)" FontSize="11.5" FontWeight="SemiBold" Foreground="#6CCB5F" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="4" Background="#1D1D1D" CornerRadius="5" Padding="8,6">
+                            <Border Grid.Column="4" Background="#1D1D1D" CornerRadius="5" Padding="8,5">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLastSeen1" Text="最後回應時間" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalLastSeen1" Text="等待回應..." FontSize="11" FontWeight="SemiBold" Foreground="#B0B0B0" Margin="0,4,0,0"/>
+                                    <TextBlock x:Name="TxtLocalLastSeen1" Text="等待回應..." FontSize="11" FontWeight="SemiBold" Foreground="#B0B0B0" Margin="0,3,0,0"/>
                                 </StackPanel>
                             </Border>
+                        </Grid>
+
+                        <!-- Sparkline Mini Graph -->
+                        <Grid Grid.Row="2" Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock x:Name="LblSparkline1" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+
+                            <Border Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
+                                <Canvas x:Name="CanvasSparkline1" Height="24" ClipToBounds="True">
+                                    <Polygon x:Name="FillSparkline1" Fill="#184CC2FF" StrokeThickness="0"/>
+                                    <Polyline x:Name="LineSparkline1" Stroke="#60CDFF" StrokeThickness="1.5"/>
+                                </Canvas>
+                            </Border>
+
+                            <TextBlock x:Name="TxtJitter1" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
                     </Grid>
                 </Border>
 
-                <!-- Card 2: Local Target 2 (網段活躍設備 / 鄰近主機) -->
-                <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
+                <!-- Card 2: Local Target 2 (網段活躍設備) -->
+                <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,9" Margin="0,0,0,9">
                     <Grid>
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
                         <!-- Header & Input Bar -->
-                        <Grid Grid.Row="0" Margin="0,0,0,8">
+                        <Grid Grid.Row="0" Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
@@ -753,13 +794,13 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="6" Background="#262D42" Margin="0,0,10,0">
-                                <TextBlock Text="💻" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Border Grid.Column="0" Width="30" Height="30" CornerRadius="6" Background="#262D42" Margin="0,0,10,0">
+                                <TextBlock Text="💻" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
 
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock x:Name="TxtLocalTitle2" Text="區域設備 #2 (網段活躍設備)" FontSize="14" FontWeight="SemiBold" Foreground="#FFFFFF"/>
+                                    <TextBlock x:Name="TxtLocalTitle2" Text="區域設備 #2 (網段活躍設備)" FontSize="13.5" FontWeight="SemiBold" Foreground="#FFFFFF"/>
                                     <Border Background="#1C263A" BorderBrush="#2D4370" BorderThickness="1" CornerRadius="4" Margin="8,0,0,0" Padding="5,1">
                                         <TextBlock Text="SUBNET #2" FontSize="9" FontWeight="Bold" Foreground="#4CC2FF"/>
                                     </Border>
@@ -769,7 +810,7 @@ $xaml = @"
                             <!-- Inline IP Input -->
                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock x:Name="TxtLocalIPLabel2" Text="目標 IP:" FontSize="12" Foreground="#A0A0A0" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBox x:Name="TxtLocalIP2" Width="140" Text="192.168.1.2" Style="{StaticResource FluentTextBoxStyle}" Margin="0,0,6,0"/>
+                                <TextBox x:Name="TxtLocalIP2" Width="135" Text="192.168.1.2" Style="{StaticResource FluentTextBoxStyle}" Margin="0,0,6,0"/>
                                 <Button x:Name="BtnApplyIP2" Content="套用" Style="{StaticResource AccentButtonStyle}" Padding="10,3"/>
                             </StackPanel>
 
@@ -784,57 +825,78 @@ $xaml = @"
                         <!-- Metrics Grid -->
                         <Grid Grid.Row="1">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="135"/>
+                                <ColumnDefinition Width="130"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
-                            <Border Grid.Column="0" Background="#1D1D1D" CornerRadius="5" Padding="10,6" Margin="0,0,6,0">
+                            <Border Grid.Column="0" Background="#1D1D1D" CornerRadius="5" Padding="10,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLatency2" Text="目前延遲" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalLatency2" Text="-- ms" FontSize="18" FontWeight="Bold" Foreground="#60CDFF" Margin="0,2,0,0"/>
+                                    <TextBlock x:Name="TxtLocalLatency2" Text="-- ms" FontSize="17" FontWeight="Bold" Foreground="#60CDFF" Margin="0,1,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="1" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="1" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblAvg2" Text="平均延遲" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalAvg2" Text="-- ms" FontSize="13" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtLocalAvg2" Text="-- ms" FontSize="12.5" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="2" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="2" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblMinMax2" Text="最小 / 最大" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalMinMax2" Text="-- / --" FontSize="12" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtLocalMinMax2" Text="-- / --" FontSize="11.5" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="3" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="3" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLoss2" Text="遺失率 (Lost/Total)" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalLoss2" Text="0.0% (0/0)" FontSize="12" FontWeight="SemiBold" Foreground="#6CCB5F" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtLocalLoss2" Text="0.0% (0/0)" FontSize="11.5" FontWeight="SemiBold" Foreground="#6CCB5F" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="4" Background="#1D1D1D" CornerRadius="5" Padding="8,6">
+                            <Border Grid.Column="4" Background="#1D1D1D" CornerRadius="5" Padding="8,5">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLastSeen2" Text="最後回應時間" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalLastSeen2" Text="等待回應..." FontSize="11" FontWeight="SemiBold" Foreground="#B0B0B0" Margin="0,4,0,0"/>
+                                    <TextBlock x:Name="TxtLocalLastSeen2" Text="等待回應..." FontSize="11" FontWeight="SemiBold" Foreground="#B0B0B0" Margin="0,3,0,0"/>
                                 </StackPanel>
                             </Border>
+                        </Grid>
+
+                        <!-- Sparkline Mini Graph -->
+                        <Grid Grid.Row="2" Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock x:Name="LblSparkline2" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+
+                            <Border Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
+                                <Canvas x:Name="CanvasSparkline2" Height="24" ClipToBounds="True">
+                                    <Polygon x:Name="FillSparkline2" Fill="#184CC2FF" StrokeThickness="0"/>
+                                    <Polyline x:Name="LineSparkline2" Stroke="#60CDFF" StrokeThickness="1.5"/>
+                                </Canvas>
+                            </Border>
+
+                            <TextBlock x:Name="TxtJitter2" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
                     </Grid>
                 </Border>
 
-                <!-- Card 3: Local Target 3 (本機實體網卡 IP / 備用設備) -->
-                <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,4">
+                <!-- Card 3: Local Target 3 (本機實體網卡 IP) -->
+                <Border Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="14,9" Margin="0,0,0,4">
                     <Grid>
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
                         <!-- Header & Input Bar -->
-                        <Grid Grid.Row="0" Margin="0,0,0,8">
+                        <Grid Grid.Row="0" Margin="0,0,0,6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
@@ -842,13 +904,13 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="6" Background="#33213B" Margin="0,0,10,0">
-                                <TextBlock Text="🖥️" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Border Grid.Column="0" Width="30" Height="30" CornerRadius="6" Background="#33213B" Margin="0,0,10,0">
+                                <TextBlock Text="🖥️" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
 
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock x:Name="TxtLocalTitle3" Text="區域設備 #3 (本機網卡實體 IP)" FontSize="14" FontWeight="SemiBold" Foreground="#FFFFFF"/>
+                                    <TextBlock x:Name="TxtLocalTitle3" Text="區域設備 #3 (本機網卡實體 IP)" FontSize="13.5" FontWeight="SemiBold" Foreground="#FFFFFF"/>
                                     <Border Background="#291A30" BorderBrush="#593269" BorderThickness="1" CornerRadius="4" Margin="8,0,0,0" Padding="5,1">
                                         <TextBlock Text="SUBNET #3" FontSize="9" FontWeight="Bold" Foreground="#D182FF"/>
                                     </Border>
@@ -858,7 +920,7 @@ $xaml = @"
                             <!-- Inline IP Input -->
                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock x:Name="TxtLocalIPLabel3" Text="目標 IP:" FontSize="12" Foreground="#A0A0A0" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                                <TextBox x:Name="TxtLocalIP3" Width="140" Text="192.168.1.227" Style="{StaticResource FluentTextBoxStyle}" Margin="0,0,6,0"/>
+                                <TextBox x:Name="TxtLocalIP3" Width="135" Text="192.168.1.227" Style="{StaticResource FluentTextBoxStyle}" Margin="0,0,6,0"/>
                                 <Button x:Name="BtnApplyIP3" Content="套用" Style="{StaticResource AccentButtonStyle}" Padding="10,3"/>
                             </StackPanel>
 
@@ -873,43 +935,63 @@ $xaml = @"
                         <!-- Metrics Grid -->
                         <Grid Grid.Row="1">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="135"/>
+                                <ColumnDefinition Width="130"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
-                            <Border Grid.Column="0" Background="#1D1D1D" CornerRadius="5" Padding="10,6" Margin="0,0,6,0">
+                            <Border Grid.Column="0" Background="#1D1D1D" CornerRadius="5" Padding="10,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLatency3" Text="目前延遲" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalLatency3" Text="-- ms" FontSize="18" FontWeight="Bold" Foreground="#60CDFF" Margin="0,2,0,0"/>
+                                    <TextBlock x:Name="TxtLocalLatency3" Text="-- ms" FontSize="17" FontWeight="Bold" Foreground="#60CDFF" Margin="0,1,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="1" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="1" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblAvg3" Text="平均延遲" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalAvg3" Text="-- ms" FontSize="13" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtLocalAvg3" Text="-- ms" FontSize="12.5" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="2" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="2" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblMinMax3" Text="最小 / 最大" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalMinMax3" Text="-- / --" FontSize="12" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtLocalMinMax3" Text="-- / --" FontSize="11.5" FontWeight="SemiBold" Foreground="#E0E0E0" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="3" Background="#1D1D1D" CornerRadius="5" Padding="8,6" Margin="0,0,6,0">
+                            <Border Grid.Column="3" Background="#1D1D1D" CornerRadius="5" Padding="8,5" Margin="0,0,6,0">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLoss3" Text="遺失率 (Lost/Total)" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalLoss3" Text="0.0% (0/0)" FontSize="12" FontWeight="SemiBold" Foreground="#6CCB5F" Margin="0,3,0,0"/>
+                                    <TextBlock x:Name="TxtLocalLoss3" Text="0.0% (0/0)" FontSize="11.5" FontWeight="SemiBold" Foreground="#6CCB5F" Margin="0,2,0,0"/>
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Column="4" Background="#1D1D1D" CornerRadius="5" Padding="8,6">
+                            <Border Grid.Column="4" Background="#1D1D1D" CornerRadius="5" Padding="8,5">
                                 <StackPanel>
                                     <TextBlock x:Name="LblLastSeen3" Text="最後回應時間" FontSize="10" Foreground="#888888"/>
-                                    <TextBlock x:Name="TxtLocalLastSeen3" Text="等待回應..." FontSize="11" FontWeight="SemiBold" Foreground="#B0B0B0" Margin="0,4,0,0"/>
+                                    <TextBlock x:Name="TxtLocalLastSeen3" Text="等待回應..." FontSize="11" FontWeight="SemiBold" Foreground="#B0B0B0" Margin="0,3,0,0"/>
                                 </StackPanel>
                             </Border>
+                        </Grid>
+
+                        <!-- Sparkline Mini Graph -->
+                        <Grid Grid.Row="2" Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock x:Name="LblSparkline3" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+
+                            <Border Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
+                                <Canvas x:Name="CanvasSparkline3" Height="24" ClipToBounds="True">
+                                    <Polygon x:Name="FillSparkline3" Fill="#184CC2FF" StrokeThickness="0"/>
+                                    <Polyline x:Name="LineSparkline3" Stroke="#60CDFF" StrokeThickness="1.5"/>
+                                </Canvas>
+                            </Border>
+
+                            <TextBlock x:Name="TxtJitter3" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
                     </Grid>
                 </Border>
@@ -917,14 +999,14 @@ $xaml = @"
         </ScrollViewer>
 
         <!-- 4: Activity Log -->
-        <Border Grid.Row="4" Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="12">
+        <Border Grid.Row="4" Background="#242424" BorderBrush="#333333" BorderThickness="1" CornerRadius="8" Padding="11">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <Grid Grid.Row="0" Margin="0,0,0,6">
+                <Grid Grid.Row="0" Margin="0,0,0,5">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -935,7 +1017,7 @@ $xaml = @"
                         <TextBlock x:Name="TxtLogCounter" Text="(最新 100 筆)" FontSize="11" Foreground="#777777" Margin="6,1,0,0"/>
                     </StackPanel>
 
-                    <Button x:Name="BtnClearLog" Grid.Column="1" Content="清除日誌" Style="{StaticResource FluentButtonStyle}" Padding="10,2" FontSize="11"/>
+                    <Button x:Name="BtnClearLog" Grid.Column="1" Content="清除日誌" Style="{StaticResource FluentButtonStyle}" Padding="9,2" FontSize="11"/>
                 </Grid>
 
                 <Border Grid.Row="1" Background="#181818" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4">
@@ -963,6 +1045,8 @@ $cmbItem3          = $window.FindName("CmbItem3")
 $cmbItem5          = $window.FindName("CmbItem5")
 $txtIntervalLabel  = $window.FindName("TxtIntervalLabel")
 $chkSoundAlert     = $window.FindName("ChkSoundAlert")
+$chkMinToTray      = $window.FindName("ChkMinToTray")
+$btnMinimizeTray   = $window.FindName("BtnMinimizeTray")
 $btnToggleLang     = $window.FindName("BtnToggleLang")
 $btnPauseResume    = $window.FindName("BtnPauseResume")
 $btnResetStats     = $window.FindName("BtnResetStats")
@@ -1005,11 +1089,12 @@ $txtLocalIP3       = $window.FindName("TxtLocalIP3")
 $btnApplyIP3       = $window.FindName("BtnApplyIP3")
 
 # 指標標籤列表 (供語系切換批次處理)
-$latencyLabels = @($window.FindName("LblLatency0"), $window.FindName("LblLatency1"), $window.FindName("LblLatency2"), $window.FindName("LblLatency3"))
-$avgLabels     = @($window.FindName("LblAvg0"), $window.FindName("LblAvg1"), $window.FindName("LblAvg2"), $window.FindName("LblAvg3"))
-$minMaxLabels  = @($window.FindName("LblMinMax0"), $window.FindName("LblMinMax1"), $window.FindName("LblMinMax2"), $window.FindName("LblMinMax3"))
-$lossLabels    = @($window.FindName("LblLoss0"), $window.FindName("LblLoss1"), $window.FindName("LblLoss2"), $window.FindName("LblLoss3"))
-$lastSeenLabels= @($window.FindName("LblLastSeen0"), $window.FindName("LblLastSeen1"), $window.FindName("LblLastSeen2"), $window.FindName("LblLastSeen3"))
+$latencyLabels     = @($window.FindName("LblLatency0"), $window.FindName("LblLatency1"), $window.FindName("LblLatency2"), $window.FindName("LblLatency3"))
+$avgLabels         = @($window.FindName("LblAvg0"), $window.FindName("LblAvg1"), $window.FindName("LblAvg2"), $window.FindName("LblAvg3"))
+$minMaxLabels      = @($window.FindName("LblMinMax0"), $window.FindName("LblMinMax1"), $window.FindName("LblMinMax2"), $window.FindName("LblMinMax3"))
+$lossLabels        = @($window.FindName("LblLoss0"), $window.FindName("LblLoss1"), $window.FindName("LblLoss2"), $window.FindName("LblLoss3"))
+$lastSeenLabels    = @($window.FindName("LblLastSeen0"), $window.FindName("LblLastSeen1"), $window.FindName("LblLastSeen2"), $window.FindName("LblLastSeen3"))
+$sparklineLabels   = @($window.FindName("LblSparkline0"), $window.FindName("LblSparkline1"), $window.FindName("LblSparkline2"), $window.FindName("LblSparkline3"))
 
 # 套用初次偵測到的網段資訊
 $txtSubnetInfo.Text  = "$($detectedSubnet.Subnet) ($($detectedSubnet.InterfaceName))"
@@ -1020,7 +1105,7 @@ $txtLocalIP1.Text    = $detectedSubnet.Target1
 $txtLocalIP2.Text    = $detectedSubnet.Target2
 $txtLocalIP3.Text    = $detectedSubnet.Target3
 
-# 6. 目標卡片與統計物件映射表
+# 6. 目標卡片、歷史走勢 (Sparkline) 與統計物件映射表
 function New-TargetStat {
     return [PSCustomObject]@{
         Sent       = 0
@@ -1040,6 +1125,15 @@ $statsMap = @{
     "Local3" = New-TargetStat
 }
 
+# 過去 30 次 Ping 歷史走勢數值佇列
+$sparkHistoryMap = @{
+    "Google" = [System.Collections.Generic.List[long]]::new()
+    "Local1" = [System.Collections.Generic.List[long]]::new()
+    "Local2" = [System.Collections.Generic.List[long]]::new()
+    "Local3" = [System.Collections.Generic.List[long]]::new()
+}
+$maxSparkPoints = 30
+
 $cardsMap = @{
     "Google" = @{
         Pill     = $window.FindName("GoogleStatusPill")
@@ -1050,6 +1144,10 @@ $cardsMap = @{
         MinMax   = $window.FindName("TxtGoogleMinMax")
         Loss     = $window.FindName("TxtGoogleLoss")
         LastSeen = $window.FindName("TxtGoogleLastSeen")
+        Canvas   = $window.FindName("CanvasSparkline0")
+        Line     = $window.FindName("LineSparkline0")
+        Fill     = $window.FindName("FillSparkline0")
+        Jitter   = $window.FindName("TxtJitter0")
         NameZh   = "🌐 Google"
         NameEn   = "🌐 Google"
     }
@@ -1062,6 +1160,10 @@ $cardsMap = @{
         MinMax   = $window.FindName("TxtLocalMinMax1")
         Loss     = $window.FindName("TxtLocalLoss1")
         LastSeen = $window.FindName("TxtLocalLastSeen1")
+        Canvas   = $window.FindName("CanvasSparkline1")
+        Line     = $window.FindName("LineSparkline1")
+        Fill     = $window.FindName("FillSparkline1")
+        Jitter   = $window.FindName("TxtJitter1")
         NameZh   = "📡 閘道 #1"
         NameEn   = "📡 Gateway #1"
     }
@@ -1074,6 +1176,10 @@ $cardsMap = @{
         MinMax   = $window.FindName("TxtLocalMinMax2")
         Loss     = $window.FindName("TxtLocalLoss2")
         LastSeen = $window.FindName("TxtLocalLastSeen2")
+        Canvas   = $window.FindName("CanvasSparkline2")
+        Line     = $window.FindName("LineSparkline2")
+        Fill     = $window.FindName("FillSparkline2")
+        Jitter   = $window.FindName("TxtJitter2")
         NameZh   = "💻 設備 #2"
         NameEn   = "💻 Subnet #2"
     }
@@ -1086,6 +1192,10 @@ $cardsMap = @{
         MinMax   = $window.FindName("TxtLocalMinMax3")
         Loss     = $window.FindName("TxtLocalLoss3")
         LastSeen = $window.FindName("TxtLocalLastSeen3")
+        Canvas   = $window.FindName("CanvasSparkline3")
+        Line     = $window.FindName("LineSparkline3")
+        Fill     = $window.FindName("FillSparkline3")
+        Jitter   = $window.FindName("TxtJitter3")
         NameZh   = "🖥️ 本機 #3"
         NameEn   = "🖥️ Host #3"
     }
@@ -1105,9 +1215,11 @@ $i18n = @{
         MonitoringPaused = "MONITORING PAUSED"
         IntervalLabel    = "偵測間隔:"
         SoundAlert       = "斷線警報音效"
+        MinToTrayChk     = "關閉時縮小至系統匣"
+        BtnTrayText      = "📥 縮至系統匣"
         Pause            = "暫停偵測"
         Resume           = "繼續偵測"
-        ResetStats       = "重置所有統計"
+        ResetStats       = "重置統計"
         ToggleBtnText    = "🌐 English"
         SubnetLabel      = "目前網路網段:"
         HostIPLabel      = "本機 IP:"
@@ -1125,6 +1237,8 @@ $i18n = @{
         LossRate         = "遺失率 (Lost/Total)"
         LastSeen         = "最後回應時間"
         Waiting          = "等待回應..."
+        SparklineLabel   = "即時波動走勢 (最近 30 次):"
+        JitterPrefix     = "抖動:"
         ActivityFeed     = "📋 即時偵測日誌 (滿 100 筆自動清除)"
         ClearLog         = "清除日誌"
         Target1Title     = "區域設備 #1 (網段預設閘道)"
@@ -1136,6 +1250,12 @@ $i18n = @{
         Interval_5s      = "5 秒 (5000ms)"
         LogCountPrefix   = "最新"
         LogCountSuffix   = "筆"
+        TrayShow         = "顯示視窗"
+        TrayExit         = "結束程式"
+        ToastDropTitle   = "⚠️ 網路斷線警報"
+        ToastDropMsg     = "已失去連線！請檢查網路設定。"
+        ToastRecTitle    = "✅ 網路已恢復連線"
+        ToastRecMsg      = "已重新連線成功！"
     }
     "en" = @{
         AppTitle         = "Network Sentinel - Fluent Network Monitor"
@@ -1144,9 +1264,11 @@ $i18n = @{
         MonitoringPaused = "MONITORING PAUSED"
         IntervalLabel    = "Interval:"
         SoundAlert       = "Alert on Disconnect"
+        MinToTrayChk     = "Minimize to Tray on Close"
+        BtnTrayText      = "📥 To Tray"
         Pause            = "Pause"
         Resume           = "Resume"
-        ResetStats       = "Reset All Stats"
+        ResetStats       = "Reset Stats"
         ToggleBtnText    = "🌐 繁體中文"
         SubnetLabel      = "Detected Subnet:"
         HostIPLabel      = "Host IP:"
@@ -1164,6 +1286,8 @@ $i18n = @{
         LossRate         = "Packet Loss"
         LastSeen         = "Last Seen"
         Waiting          = "Waiting..."
+        SparklineLabel   = "Latency Waveform (Last 30):"
+        JitterPrefix     = "Jitter:"
         ActivityFeed     = "📋 Activity Feed (Auto-clears at 100)"
         ClearLog         = "Clear Log"
         Target1Title     = "Local #1 (Default Gateway)"
@@ -1175,7 +1299,56 @@ $i18n = @{
         Interval_5s      = "5 sec (5000ms)"
         LogCountPrefix   = "Recent"
         LogCountSuffix   = "items"
+        TrayShow         = "Show Window"
+        TrayExit         = "Exit"
+        ToastDropTitle   = "⚠️ Network Disconnection Alert"
+        ToastDropMsg     = "connection lost! Please check network settings."
+        ToastRecTitle    = "✅ Network Restored"
+        ToastRecMsg      = "connection back online!"
     }
+}
+
+# 8. 系統匣 (System Tray NotifyIcon) 初始化
+$notifyIcon = New-Object System.Windows.Forms.NotifyIcon
+$notifyIcon.Icon = [System.Drawing.SystemIcons]::Shield
+$notifyIcon.Text = "Network Sentinel - Fluent Network Monitor"
+$notifyIcon.Visible = $true
+
+$trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
+$menuShow = $trayMenu.Items.Add("顯示視窗 (Show Window)")
+$menuPause= $trayMenu.Items.Add("暫停 / 繼續 (Pause/Resume)")
+$trayMenu.Items.Add("-")
+$menuExit = $trayMenu.Items.Add("結束程式 (Exit)")
+$notifyIcon.ContextMenuStrip = $trayMenu
+
+# 左鍵點擊托盤圖示喚回視窗
+$notifyIcon.Add_Click({
+    param($s, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+        $window.Show()
+        $window.WindowState = [System.Windows.WindowState]::Normal
+        $window.Activate()
+    }
+})
+
+$menuShow.Add_Click({
+    $window.Show()
+    $window.WindowState = [System.Windows.WindowState]::Normal
+    $window.Activate()
+})
+
+$menuExit.Add_Click({
+    $notifyIcon.Visible = $false
+    $notifyIcon.Dispose()
+    $window.Close()
+})
+
+# 函式：更新系統匣右鍵選單語系
+function Update-TrayMenuLanguage {
+    $dict = $i18n[$script:currentLang]
+    $menuShow.Text = $dict.TrayShow
+    $menuPause.Text = if ($runner.IsRunning) { $dict.Pause } else { $dict.Resume }
+    $menuExit.Text = $dict.TrayExit
 }
 
 # 函式：套用多國語言
@@ -1188,6 +1361,8 @@ function Apply-Language {
     $txtHeaderSubtitle.Text = $dict.HeaderSubtitle
     $txtIntervalLabel.Text = $dict.IntervalLabel
     $chkSoundAlert.Content = $dict.SoundAlert
+    $chkMinToTray.Content  = $dict.MinToTrayChk
+    $btnMinimizeTray.Content = $dict.BtnTrayText
     $btnToggleLang.Content = $dict.ToggleBtnText
     $btnResetStats.Content = $dict.ResetStats
 
@@ -1224,14 +1399,13 @@ function Apply-Language {
     $btnApplyIP2.Content = $dict.Apply
     $btnApplyIP3.Content = $dict.Apply
 
-    # 批次更新指標文字標籤
-    $latencyLabels | ForEach-Object { $_.Text = $dict.CurLatency }
-    $avgLabels     | ForEach-Object { $_.Text = $dict.AvgLatency }
-    $minMaxLabels  | ForEach-Object { $_.Text = $dict.MinMaxLatency }
-    $lossLabels    | ForEach-Object { $_.Text = $dict.LossRate }
-    $lastSeenLabels| ForEach-Object { $_.Text = $dict.LastSeen }
+    $latencyLabels   | ForEach-Object { $_.Text = $dict.CurLatency }
+    $avgLabels       | ForEach-Object { $_.Text = $dict.AvgLatency }
+    $minMaxLabels    | ForEach-Object { $_.Text = $dict.MinMaxLatency }
+    $lossLabels      | ForEach-Object { $_.Text = $dict.LossRate }
+    $lastSeenLabels  | ForEach-Object { $_.Text = $dict.LastSeen }
+    $sparklineLabels | ForEach-Object { $_.Text = $dict.SparklineLabel }
 
-    # 更新卡片狀態徽章文字
     foreach ($k in $cardsMap.Keys) {
         $c = $cardsMap[$k]
         $st = $statsMap[$k]
@@ -1245,15 +1419,16 @@ function Apply-Language {
     $txtActivityFeedTitle.Text = $dict.ActivityFeed
     $btnClearLog.Content = $dict.ClearLog
     $txtLogCounter.Text = "($($dict.LogCountPrefix) $($logEntries.Count) / $maxLogLines $($dict.LogCountSuffix))"
+
+    Update-TrayMenuLanguage
 }
 
-# 8. 輔助函式：新增日誌 (滿 100 筆後自動清空)
+# 9. 輔助函式：新增日誌 (滿 100 筆後自動清空)
 function Add-LogLine {
     param([string]$line)
     $timestamp = (Get-Date).ToString("HH:mm:ss")
     $formatted = "[$timestamp] $line"
 
-    # 當日誌累積達到 100 筆上限時，自動清空日誌快取
     if ($logEntries.Count -ge $maxLogLines) {
         $logEntries.Clear()
         $clearNotice = if ($script:currentLang -eq "zh") {
@@ -1282,6 +1457,96 @@ function Reset-TargetStats {
     $stats.TotalTime = 0
 }
 
+# 10. Sparkline 即時微型走勢圖繪製函式
+function Update-SparklineGraph {
+    param([string]$id, [long]$latestRtt, [bool]$isSuccess)
+    
+    $card = $cardsMap[$id]
+    $list = $sparkHistoryMap[$id]
+
+    $valToRecord = if ($isSuccess) { $latestRtt } else { -1 }
+    $list.Add($valToRecord)
+    if ($list.Count -gt $maxSparkPoints) {
+        $list.RemoveAt(0)
+    }
+
+    $canvas = $card.Canvas
+    $line   = $card.Line
+    $fill   = $card.Fill
+    $w = $canvas.ActualWidth
+    if ($w -le 10) { $w = 340 }
+    $h = 24.0
+
+    # 計算歷史最大值以進行動態 Y 軸縮放 (最低保證 30ms 避免過度縮小)
+    $validVals = $list | Where-Object { $_ -ge 0 }
+    $maxVal = 30.0
+    if ($validVals.Count -gt 0) {
+        $observedMax = ($validVals | Measure-Object -Maximum).Maximum
+        if ($observedMax -gt $maxVal) { $maxVal = [double]$observedMax }
+    }
+
+    $pts = New-Object System.Windows.Media.PointCollection
+    $fillPts = New-Object System.Windows.Media.PointCollection
+    $fillPts.Add((New-Object System.Windows.Point(0, $h)))
+
+    $stepX = if ($list.Count -gt 1) { $w / ($list.Count - 1) } else { $w }
+
+    for ($i = 0; $i -lt $list.Count; $i++) {
+        $x = $i * $stepX
+        $v = $list[$i]
+        $y = if ($v -ge 0) {
+            $clamped = [math]::Min($maxVal, $v)
+            $h - ($clamped / $maxVal * ($h - 4.0)) - 2.0
+        } else {
+            $h - 1.0 # 斷線掉到最底部
+        }
+        $pt = New-Object System.Windows.Point($x, $y)
+        $pts.Add($pt)
+        $fillPts.Add($pt)
+    }
+    $fillPts.Add((New-Object System.Windows.Point($w, $h)))
+
+    $line.Points = $pts
+    $fill.Points = $fillPts
+
+    # 動態走勢顏色
+    if ($latestRtt -ge 0) {
+        if ($latestRtt -lt 30) {
+            $line.Stroke = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#60CDFF")
+            $fill.Fill   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#184CC2FF")
+        } elseif ($latestRtt -lt 100) {
+            $line.Stroke = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FFB900")
+            $fill.Fill   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#18FFB900")
+        } else {
+            $line.Stroke = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FF7043")
+            $fill.Fill   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#18FF7043")
+        }
+    } else {
+        $line.Stroke = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FF5555")
+        $fill.Fill   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#20FF5555")
+    }
+
+    # 計算 Jitter 抖動率 (相鄰兩次 Ping 的延遲差值平均)
+    if ($validVals.Count -ge 2) {
+        $diffSum = 0
+        $diffCount = 0
+        for ($j = 1; $j -lt $validVals.Count; $j++) {
+            $diffSum += [math]::Abs($validVals[$j] - $validVals[$j - 1])
+            $diffCount++
+        }
+        $jitter = [math]::Round($diffSum / $diffCount, 1)
+        $dict = $i18n[$script:currentLang]
+        $card.Jitter.Text = "$($dict.JitterPrefix) $jitter ms"
+        if ($jitter -lt 3) {
+            $card.Jitter.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#6CCB5F")
+        } elseif ($jitter -lt 15) {
+            $card.Jitter.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FFB900")
+        } else {
+            $card.Jitter.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FF7043")
+        }
+    }
+}
+
 # 輔助顏色畫刷
 $brushGreenBg     = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#163821")
 $brushGreenBorder = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#256938")
@@ -1297,7 +1562,7 @@ $brushCyanText    = [System.Windows.Media.BrushConverter]::new().ConvertFromStri
 $brushAmberText   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FFB900")
 $brushOrangeText  = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#FF7043")
 
-# 9. 建立並啟動非同步 Ping Runner (4 目標)
+# 11. 建立並啟動非同步 Ping Runner (4 目標)
 $runner = New-Object PingMonitorRunner
 $runner.InternetTarget = "www.google.com"
 $runner.LocalTarget1   = $txtLocalIP1.Text
@@ -1305,7 +1570,7 @@ $runner.LocalTarget2   = $txtLocalIP2.Text
 $runner.LocalTarget3   = $txtLocalIP3.Text
 $runner.IntervalMs     = 1000
 
-# 10. 處理 Ping 回應事件回呼
+# 12. 處理 Ping 回應事件回呼 (含即時 Sparkline 與 Windows 11 原生通知)
 $runner.add_OnPingResult({
     param([PingResult]$result)
     
@@ -1317,6 +1582,7 @@ $runner.add_OnPingResult({
     $stats.Sent++
     $timeStr = (Get-Date $result.Timestamp).ToString("HH:mm:ss")
     $dict = $i18n[$script:currentLang]
+    $targetName = if ($script:currentLang -eq "zh") { $card.NameZh } else { $card.NameEn }
 
     if ($result.Success) {
         $stats.Recv++
@@ -1347,7 +1613,15 @@ $runner.add_OnPingResult({
         $card.Avg.Text      = "$avg ms"
         $card.MinMax.Text   = "$($stats.MinTime) ms / $($stats.MaxTime) ms"
         $card.LastSeen.Text = $timeStr
+
+        # 若原先為斷線，發布連線已恢復通知
+        if (-not $stats.LastOnline) {
+            $toastTitle = $dict.ToastRecTitle
+            $toastMsg = "$targetName [$($result.Target)] $($dict.ToastRecMsg) ($displayRtt)"
+            $notifyIcon.ShowBalloonTip(3000, $toastTitle, $toastMsg, [System.Windows.Forms.ToolTipIcon]::Info)
+        }
         $stats.LastOnline   = $true
+
     } else {
         $stats.Lost++
 
@@ -1361,19 +1635,27 @@ $runner.add_OnPingResult({
         $card.Latency.Text     = "TIMEOUT"
         $card.Latency.Foreground = $brushRedDot
 
-        if ($chkSoundAlert.IsChecked -and $stats.LastOnline) {
-            [System.Media.SystemSounds]::Exclamation.Play()
+        # 音效與 Windows 11 原生彈窗通知
+        if ($stats.LastOnline) {
+            if ($chkSoundAlert.IsChecked) {
+                [System.Media.SystemSounds]::Exclamation.Play()
+            }
+            $toastTitle = $dict.ToastDropTitle
+            $toastMsg = "$targetName [$($result.Target)] $($dict.ToastDropMsg)"
+            $notifyIcon.ShowBalloonTip(3000, $toastTitle, $toastMsg, [System.Windows.Forms.ToolTipIcon]::Warning)
         }
         $stats.LastOnline = $false
     }
+
+    # 繪製更新即時走勢圖 (Sparkline)
+    Update-SparklineGraph -id $id -latestRtt $result.RoundtripTime -isSuccess $result.Success
 
     # 封包遺失率計算
     $lossPct = [math]::Round(($stats.Lost / $stats.Sent) * 100, 1)
     $card.Loss.Text = "$lossPct% ($($stats.Lost)/$($stats.Sent))"
     $card.Loss.Foreground = if ($stats.Lost -eq 0) { $brushGreenText } else { $brushRedText }
 
-    # 更新日誌
-    $targetName = if ($script:currentLang -eq "zh") { $card.NameZh } else { $card.NameEn }
+    # 更新即時日誌
     $statusMsg = if ($result.Success) {
         $dur = if ($result.RoundtripTime -eq 0) { "< 1ms" } else { "$($result.RoundtripTime)ms" }
         "OK ($dur)"
@@ -1383,7 +1665,7 @@ $runner.add_OnPingResult({
     Add-LogLine -line "$targetName [$($result.Target)] -> $statusMsg"
 })
 
-# 11. 事件：修改與套用 Local IP 1, 2, 3
+# 13. 事件：修改與套用 Local IP 1, 2, 3
 function Set-LocalTarget {
     param([int]$index, [System.Windows.Controls.TextBox]$box)
     $rawIP = $box.Text.Trim()
@@ -1402,30 +1684,29 @@ function Set-LocalTarget {
     }
 
     Reset-TargetStats -stats $statsMap[$targetKey]
+    $sparkHistoryMap[$targetKey].Clear()
     $card = $cardsMap[$targetKey]
     $card.Latency.Text  = "-- ms"
     $card.Avg.Text      = "-- ms"
     $card.MinMax.Text   = "-- / --"
     $card.Loss.Text     = "0.0% (0/0)"
     $card.LastSeen.Text = $i18n[$script:currentLang].Waiting
+    $card.Jitter.Text   = "$($i18n[$script:currentLang].JitterPrefix) -- ms"
 
     $logMsg = if ($script:currentLang -eq "zh") { "⚙️ 【設定更新】已變更區網設備 #$index 目標為: $rawIP" } else { "⚙️ [Config Update] Local target #$index updated to: $rawIP" }
     Add-LogLine -line $logMsg
 }
 
-# 綁定 Local 1
 $btnApplyIP1.Add_Click({ Set-LocalTarget -index 1 -box $txtLocalIP1 })
 $txtLocalIP1.Add_KeyDown({ param($s, $e); if ($e.Key -eq [System.Windows.Input.Key]::Enter) { Set-LocalTarget -index 1 -box $txtLocalIP1 } })
 
-# 綁定 Local 2
 $btnApplyIP2.Add_Click({ Set-LocalTarget -index 2 -box $txtLocalIP2 })
 $txtLocalIP2.Add_KeyDown({ param($s, $e); if ($e.Key -eq [System.Windows.Input.Key]::Enter) { Set-LocalTarget -index 2 -box $txtLocalIP2 } })
 
-# 綁定 Local 3
 $btnApplyIP3.Add_Click({ Set-LocalTarget -index 3 -box $txtLocalIP3 })
 $txtLocalIP3.Add_KeyDown({ param($s, $e); if ($e.Key -eq [System.Windows.Input.Key]::Enter) { Set-LocalTarget -index 3 -box $txtLocalIP3 } })
 
-# 12. 事件：重新偵測當前網段
+# 14. 事件：重新偵測當前網段
 $btnRedetectSubnet.Add_Click({
     $newSubnet = Get-CurrentSubnetInfo
     $txtSubnetInfo.Text  = "$($newSubnet.Subnet) ($($newSubnet.InterfaceName))"
@@ -1448,10 +1729,11 @@ $btnRedetectSubnet.Add_Click({
         $txtLocalTitle3.Text = "Local #3 (Host Adapter IP)"
     }
 
-    # 重置 3 個 Local 目標統計
-    Reset-TargetStats -stats $statsMap["Local1"]
-    Reset-TargetStats -stats $statsMap["Local2"]
-    Reset-TargetStats -stats $statsMap["Local3"]
+    # 重置 3 個 Local 目標統計與走勢圖
+    foreach ($k in @("Local1", "Local2", "Local3")) {
+        Reset-TargetStats -stats $statsMap[$k]
+        $sparkHistoryMap[$k].Clear()
+    }
 
     $logMsg1 = if ($script:currentLang -eq "zh") { "🔍 【網段重整】成功辨識網段: $($newSubnet.Subnet) ($($newSubnet.InterfaceName))" } else { "🔍 [Subnet Refresh] Subnet discovered: $($newSubnet.Subnet) ($($newSubnet.InterfaceName))" }
     $logMsg2 = if ($script:currentLang -eq "zh") { "📡 已同步更新區網監控目標: $($newSubnet.Target1) / $($newSubnet.Target2) / $($newSubnet.Target3)" } else { "📡 Synchronized local targets: $($newSubnet.Target1) / $($newSubnet.Target2) / $($newSubnet.Target3)" }
@@ -1459,7 +1741,7 @@ $btnRedetectSubnet.Add_Click({
     Add-LogLine -line $logMsg2
 })
 
-# 13. 事件：中英文雙語切換按鈕
+# 15. 事件：中英文雙語切換按鈕
 $btnToggleLang.Add_Click({
     if ($script:currentLang -eq "zh") {
         Apply-Language -lang "en"
@@ -1470,7 +1752,15 @@ $btnToggleLang.Add_Click({
     }
 })
 
-# 14. 事件：偵測間隔變更
+# 16. 事件：縮小至系統匣按鈕
+$btnMinimizeTray.Add_Click({
+    $window.Hide()
+    $tipTitle = if ($script:currentLang -eq "zh") { "Network Sentinel" } else { "Network Sentinel" }
+    $tipMsg   = if ($script:currentLang -eq "zh") { "已縮小至系統匣背景持續監控中，點擊托盤圖示可喚回視窗。" } else { "Minimized to system tray. Click the tray icon to restore." }
+    $notifyIcon.ShowBalloonTip(2000, $tipTitle, $tipMsg, [System.Windows.Forms.ToolTipIcon]::Info)
+})
+
+# 17. 事件：偵測間隔變更
 $cmbInterval.Add_SelectionChanged({
     $selectedItem = $cmbInterval.SelectedItem
     if ($selectedItem -and $selectedItem.Tag) {
@@ -1481,7 +1771,7 @@ $cmbInterval.Add_SelectionChanged({
     }
 })
 
-# 15. 事件：暫停 / 繼續偵測
+# 18. 事件：暫停 / 繼續偵測
 $btnPauseResume.Add_Click({
     $dict = $i18n[$script:currentLang]
     if ($runner.IsRunning) {
@@ -1505,22 +1795,31 @@ $btnPauseResume.Add_Click({
         $logMsg = if ($script:currentLang -eq "zh") { "▶️ 【監控恢復】已恢復背景即時偵測" } else { "▶️ [Resumed] Background monitoring resumed" }
         Add-LogLine -line $logMsg
     }
+    Update-TrayMenuLanguage
 })
 
-# 16. 事件：重置統計
+$menuPause.Add_Click({
+    $btnPauseResume.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+})
+
+# 19. 事件：重置統計
 $btnResetStats.Add_Click({
     foreach ($key in $statsMap.Keys) {
         Reset-TargetStats -stats $statsMap[$key]
+        $sparkHistoryMap[$key].Clear()
         $card = $cardsMap[$key]
         $card.Avg.Text    = "-- ms"
         $card.MinMax.Text = "-- / --"
         $card.Loss.Text   = "0.0% (0/0)"
+        $card.Jitter.Text = "$($i18n[$script:currentLang].JitterPrefix) -- ms"
+        $card.Line.Points.Clear()
+        $card.Fill.Points.Clear()
     }
-    $logMsg = if ($script:currentLang -eq "zh") { "🔄 【重置統計】所有目標歷史延遲與遺失率計數已歸零" } else { "🔄 [Stats Reset] All latency & packet loss stats reset" }
+    $logMsg = if ($script:currentLang -eq "zh") { "🔄 【重置統計】所有目標歷史延遲、走勢圖與遺失率計數已歸零" } else { "🔄 [Stats Reset] All latency, waveform & packet loss stats reset" }
     Add-LogLine -line $logMsg
 })
 
-# 17. 事件：清除日誌
+# 20. 事件：清除日誌
 $btnClearLog.Add_Click({
     $logEntries.Clear()
     $txtLog.Text = ""
@@ -1528,7 +1827,16 @@ $btnClearLog.Add_Click({
     $txtLogCounter.Text = "($($dict.LogCountPrefix) 0 / $maxLogLines $($dict.LogCountSuffix))"
 })
 
-# 18. 視窗載入完成套用 Windows 11 Fluent 深色標題列與圓角
+# 21. 視窗狀態變更：縮小時隱藏至系統匣
+$window.Add_StateChanged({
+    if ($window.WindowState -eq [System.Windows.WindowState]::Minimized) {
+        if ($chkMinToTray.IsChecked) {
+            $window.Hide()
+        }
+    }
+})
+
+# 22. 視窗載入完成套用 Windows 11 Fluent 深色標題列與圓角
 $window.Add_SourceInitialized({
     try {
         $helper = New-Object System.Windows.Interop.WindowInteropHelper($window)
@@ -1536,12 +1844,24 @@ $window.Add_SourceInitialized({
     } catch { }
 })
 
-# 19. 視窗關閉時終止背景執行緒
+# 23. 視窗關閉事件：檢查是否最小化至托盤
 $window.Add_Closing({
-    $runner.Stop()
+    param($s, $e)
+    if ($chkMinToTray.IsChecked -and $notifyIcon.Visible) {
+        # 取消關閉，改為隱藏至系統匣
+        $e.Cancel = $true
+        $window.Hide()
+        $tipTitle = if ($script:currentLang -eq "zh") { "Network Sentinel" } else { "Network Sentinel" }
+        $tipMsg   = if ($script:currentLang -eq "zh") { "程式已常駐於系統匣背景執行，點擊右下角圖示可喚回視窗。" } else { "Running in background system tray. Click the tray icon to restore." }
+        $notifyIcon.ShowBalloonTip(2000, $tipTitle, $tipMsg, [System.Windows.Forms.ToolTipIcon]::Info)
+    } else {
+        $runner.Stop()
+        $notifyIcon.Visible = $false
+        $notifyIcon.Dispose()
+    }
 })
 
-# 20. 啟動監控並顯示視窗
+# 24. 啟動監控並顯示視窗
 Add-LogLine -line "🚀 Fluent Network Sentinel 已啟動 (Started)"
 Add-LogLine -line "🔍 偵測到目前網段: $($detectedSubnet.Subnet) ($($detectedSubnet.InterfaceName))"
 Add-LogLine -line "🌐 網際網路目標: www.google.com"
