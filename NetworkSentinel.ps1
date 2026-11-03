@@ -463,16 +463,16 @@ $xaml = @"
 
         <!-- Modern Dark ToolTip Style -->
         <Style TargetType="ToolTip">
-            <Setter Property="Background" Value="#222222"/>
-            <Setter Property="Foreground" Value="#EAEAEA"/>
-            <Setter Property="BorderBrush" Value="#444444"/>
+            <Setter Property="Background" Value="#202020"/>
+            <Setter Property="Foreground" Value="#F0F0F0"/>
+            <Setter Property="BorderBrush" Value="#404040"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI, Microsoft JhengHei UI"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToolTip">
-                        <Border Background="#202020" BorderBrush="#404040" BorderThickness="1" CornerRadius="6" Padding="14,12" SnapsToDevicePixels="True">
+                        <Border Background="#202020" BorderBrush="#404040" BorderThickness="1" CornerRadius="6" Padding="14,12" SnapsToDevicePixels="True" TextBlock.Foreground="#F0F0F0" TextBlock.FontSize="12">
                             <Border.Effect>
                                 <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.6" Color="#000000"/>
                             </Border.Effect>
@@ -673,16 +673,16 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline0" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0" Cursor="Help"/>
+                            <TextBlock x:Name="LblSparkline0" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
 
-                            <Border x:Name="BorderSparkline0" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True" Cursor="Help">
+                            <Border x:Name="BorderSparkline0" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
                                 <Canvas x:Name="CanvasSparkline0" Height="24" ClipToBounds="True">
                                     <Polygon x:Name="FillSparkline0" Fill="#184CC2FF" StrokeThickness="0"/>
                                     <Polyline x:Name="LineSparkline0" Stroke="#60CDFF" StrokeThickness="1.5"/>
                                 </Canvas>
                             </Border>
 
-                            <TextBlock x:Name="TxtJitter0" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0" Cursor="Help"/>
+                            <TextBlock x:Name="TxtJitter0" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
                     </Grid>
                 </Border>
@@ -783,16 +783,16 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline1" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0" Cursor="Help"/>
+                            <TextBlock x:Name="LblSparkline1" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
 
-                            <Border x:Name="BorderSparkline1" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True" Cursor="Help">
+                            <Border x:Name="BorderSparkline1" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
                                 <Canvas x:Name="CanvasSparkline1" Height="24" ClipToBounds="True">
                                     <Polygon x:Name="FillSparkline1" Fill="#184CC2FF" StrokeThickness="0"/>
                                     <Polyline x:Name="LineSparkline1" Stroke="#60CDFF" StrokeThickness="1.5"/>
                                 </Canvas>
                             </Border>
 
-                            <TextBlock x:Name="TxtJitter1" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0" Cursor="Help"/>
+                            <TextBlock x:Name="TxtJitter1" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
                     </Grid>
                 </Border>
@@ -893,16 +893,16 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline2" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0" Cursor="Help"/>
+                            <TextBlock x:Name="LblSparkline2" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
 
-                            <Border x:Name="BorderSparkline2" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True" Cursor="Help">
+                            <Border x:Name="BorderSparkline2" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
                                 <Canvas x:Name="CanvasSparkline2" Height="24" ClipToBounds="True">
                                     <Polygon x:Name="FillSparkline2" Fill="#184CC2FF" StrokeThickness="0"/>
                                     <Polyline x:Name="LineSparkline2" Stroke="#60CDFF" StrokeThickness="1.5"/>
                                 </Canvas>
                             </Border>
 
-                            <TextBlock x:Name="TxtJitter2" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0" Cursor="Help"/>
+                            <TextBlock x:Name="TxtJitter2" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
                     </Grid>
                 </Border>
@@ -1003,16 +1003,16 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline3" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0" Cursor="Help"/>
+                            <TextBlock x:Name="LblSparkline3" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
 
-                            <Border x:Name="BorderSparkline3" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True" Cursor="Help">
+                            <Border x:Name="BorderSparkline3" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
                                 <Canvas x:Name="CanvasSparkline3" Height="24" ClipToBounds="True">
                                     <Polygon x:Name="FillSparkline3" Fill="#184CC2FF" StrokeThickness="0"/>
                                     <Polyline x:Name="LineSparkline3" Stroke="#60CDFF" StrokeThickness="1.5"/>
                                 </Canvas>
                             </Border>
 
-                            <TextBlock x:Name="TxtJitter3" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0" Cursor="Help"/>
+                            <TextBlock x:Name="TxtJitter3" Grid.Column="2" Text="抖動: -- ms" FontSize="10.5" Foreground="#8E8E8E" VerticalAlignment="Center" Margin="8,0,0,0"/>
                         </Grid>
                     </Grid>
                 </Border>
@@ -1534,6 +1534,9 @@ function Apply-Language {
 
     Update-TrayMenuLanguage
 }
+
+# 程式啟動時立即套用預設繁體中文語系 (初始化所有 UI 標籤、系統匣選單與走勢圖 ToolTip 說明)
+Apply-Language -lang "zh"
 
 # 9. 輔助函式：新增日誌 (滿 100 筆後自動清空)
 function Add-LogLine {
