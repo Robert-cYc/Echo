@@ -4,14 +4,13 @@
 .DESCRIPTION
     PowerShell + WPF 設計的 Windows 11 Fluent UI 網路連線監控程式。
     - 即時延遲走勢迷你圖 (Sparkline) 與網路抖動率 (Jitter) 計算
-    - 支援縮小至系統匣 (System Tray / 托盤常駐) 與 Windows 11 原生彈窗通知 (Toast/Balloon)
+    - 採用專屬繪製之 16x16 高對比系統匣圖示 (綠/紅/灰動態指示燈號)
+    - 採用 WPF Application 獨立訊息迴圈，視窗縮小或關閉時完美常駐於系統匣
+    - 支援 Windows 11 原生彈窗通知 (Toast/Balloon)
     - 支援中英文即時動態雙語切換 (繁體中文 / English)
     - 先自動偵測目前作用中的網路介面與網段 (Subnet / Gateway / Local IP)
     - 自動提取當前網段內的閘道、活躍鄰近設備與本機 IP 進行並行 Ping 監控
-    - 同步持續監控外部網際網路 (www.google.com)
-    - 3 組區域網路設備 IP 均支援隨時自訂修改 (Enter 或點擊套用)
-    - 連線延遲、封包遺失率、滿 100 筆自動清除日誌
-    - 採用非同步 Background Ping 機制，UI 介面完全不卡頓
+    - 4 組目標同步即時監控，滿 100 筆自動清除日誌
 #>
 
 # 1. 載入 WPF、Windows Forms 與系統繪圖組件
@@ -246,7 +245,7 @@ function Get-CurrentSubnetInfo {
 # 執行初次網段偵測
 $detectedSubnet = Get-CurrentSubnetInfo
 
-# 4. Windows 11 Fluent UI XAML 定義 (含 Sparkline 走勢圖與系統匣整合按鈕)
+# 4. Windows 11 Fluent UI XAML 定義
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -568,7 +567,7 @@ $xaml = @"
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/> <!-- Sparkline Row -->
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
                         <!-- Header -->
@@ -1036,6 +1035,10 @@ $xaml = @"
 # 5. 解析 XAML 生成視窗物件與控制項參照
 $window = [Windows.Markup.XamlReader]::Parse($xaml)
 
+# 建立 WPF Application 以支援背景常駐與顯式關閉 (Explicit Shutdown)
+$app = New-Object System.Windows.Application
+$app.ShutdownMode = [System.Windows.ShutdownMode]::OnExplicitShutdown
+
 # 取得控制列項目
 $txtHeaderSubtitle = $window.FindName("TxtHeaderSubtitle")
 $cmbInterval       = $window.FindName("CmbInterval")
@@ -1088,7 +1091,7 @@ $txtLocalIPLabel3  = $window.FindName("TxtLocalIPLabel3")
 $txtLocalIP3       = $window.FindName("TxtLocalIP3")
 $btnApplyIP3       = $window.FindName("BtnApplyIP3")
 
-# 指標標籤列表 (供語系切換批次處理)
+# 指標標籤列表
 $latencyLabels     = @($window.FindName("LblLatency0"), $window.FindName("LblLatency1"), $window.FindName("LblLatency2"), $window.FindName("LblLatency3"))
 $avgLabels         = @($window.FindName("LblAvg0"), $window.FindName("LblAvg1"), $window.FindName("LblAvg2"), $window.FindName("LblAvg3"))
 $minMaxLabels      = @($window.FindName("LblMinMax0"), $window.FindName("LblMinMax1"), $window.FindName("LblMinMax2"), $window.FindName("LblMinMax3"))
@@ -1308,9 +1311,38 @@ $i18n = @{
     }
 }
 
-# 8. 系統匣 (System Tray NotifyIcon) 初始化
+# 8. 動態繪製 16x16 高對比清晰系統匣圖示
+function New-TrayIconGraphic {
+    param([string]$state = "Online")
+    $bmp = New-Object System.Drawing.Bitmap(16, 16)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+
+    # 外圈圓底 (深色背景)
+    $bgBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(20, 28, 38))
+    $g.FillEllipse($bgBrush, 0, 0, 15, 15)
+    
+    # Fluent 藍色圓框
+    $ringPen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(0, 120, 212), 1.5)
+    $g.DrawEllipse($ringPen, 1, 1, 13, 13)
+
+    # 中心狀態光點 (綠色正常 / 紅色斷線 / 灰色暫停)
+    $color = switch ($state) {
+        "Offline" { [System.Drawing.Color]::FromArgb(255, 75, 75) }
+        "Paused"  { [System.Drawing.Color]::FromArgb(150, 150, 150) }
+        Default   { [System.Drawing.Color]::FromArgb(60, 220, 100) }
+    }
+    $dotBrush = New-Object System.Drawing.SolidBrush($color)
+    $g.FillEllipse($dotBrush, 4, 4, 7, 7)
+
+    $g.Dispose()
+    $hIcon = $bmp.GetHicon()
+    return [System.Drawing.Icon]::FromHandle($hIcon)
+}
+
+# 系統匣 (System Tray NotifyIcon) 初始化
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-$notifyIcon.Icon = [System.Drawing.SystemIcons]::Shield
+$notifyIcon.Icon = New-TrayIconGraphic -state "Online"
 $notifyIcon.Text = "Network Sentinel - Fluent Network Monitor"
 $notifyIcon.Visible = $true
 
@@ -1321,7 +1353,21 @@ $trayMenu.Items.Add("-")
 $menuExit = $trayMenu.Items.Add("結束程式 (Exit)")
 $notifyIcon.ContextMenuStrip = $trayMenu
 
-# 左鍵點擊托盤圖示喚回視窗
+$script:isExiting = $false
+
+# 完整退出程式邏輯
+$ExitApplication = {
+    $script:isExiting = $true
+    $runner.Stop()
+    if ($notifyIcon) {
+        $notifyIcon.Visible = $false
+        $notifyIcon.Dispose()
+    }
+    $window.Close()
+    $app.Shutdown()
+}
+
+# 左鍵單擊托盤圖示喚回視窗
 $notifyIcon.Add_Click({
     param($s, $e)
     if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
@@ -1338,9 +1384,7 @@ $menuShow.Add_Click({
 })
 
 $menuExit.Add_Click({
-    $notifyIcon.Visible = $false
-    $notifyIcon.Dispose()
-    $window.Close()
+    & $ExitApplication
 })
 
 # 函式：更新系統匣右鍵選單語系
@@ -1477,7 +1521,6 @@ function Update-SparklineGraph {
     if ($w -le 10) { $w = 340 }
     $h = 24.0
 
-    # 計算歷史最大值以進行動態 Y 軸縮放 (最低保證 30ms 避免過度縮小)
     $validVals = $list | Where-Object { $_ -ge 0 }
     $maxVal = 30.0
     if ($validVals.Count -gt 0) {
@@ -1498,7 +1541,7 @@ function Update-SparklineGraph {
             $clamped = [math]::Min($maxVal, $v)
             $h - ($clamped / $maxVal * ($h - 4.0)) - 2.0
         } else {
-            $h - 1.0 # 斷線掉到最底部
+            $h - 1.0
         }
         $pt = New-Object System.Windows.Point($x, $y)
         $pts.Add($pt)
@@ -1526,7 +1569,7 @@ function Update-SparklineGraph {
         $fill.Fill   = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#20FF5555")
     }
 
-    # 計算 Jitter 抖動率 (相鄰兩次 Ping 的延遲差值平均)
+    # 計算 Jitter 抖動率
     if ($validVals.Count -ge 2) {
         $diffSum = 0
         $diffCount = 0
@@ -1570,7 +1613,7 @@ $runner.LocalTarget2   = $txtLocalIP2.Text
 $runner.LocalTarget3   = $txtLocalIP3.Text
 $runner.IntervalMs     = 1000
 
-# 12. 處理 Ping 回應事件回呼 (含即時 Sparkline 與 Windows 11 原生通知)
+# 12. 處理 Ping 回應事件回呼
 $runner.add_OnPingResult({
     param([PingResult]$result)
     
@@ -1619,6 +1662,7 @@ $runner.add_OnPingResult({
             $toastTitle = $dict.ToastRecTitle
             $toastMsg = "$targetName [$($result.Target)] $($dict.ToastRecMsg) ($displayRtt)"
             $notifyIcon.ShowBalloonTip(3000, $toastTitle, $toastMsg, [System.Windows.Forms.ToolTipIcon]::Info)
+            $notifyIcon.Icon = New-TrayIconGraphic -state "Online"
         }
         $stats.LastOnline   = $true
 
@@ -1643,6 +1687,7 @@ $runner.add_OnPingResult({
             $toastTitle = $dict.ToastDropTitle
             $toastMsg = "$targetName [$($result.Target)] $($dict.ToastDropMsg)"
             $notifyIcon.ShowBalloonTip(3000, $toastTitle, $toastMsg, [System.Windows.Forms.ToolTipIcon]::Warning)
+            $notifyIcon.Icon = New-TrayIconGraphic -state "Offline"
         }
         $stats.LastOnline = $false
     }
@@ -1729,7 +1774,6 @@ $btnRedetectSubnet.Add_Click({
         $txtLocalTitle3.Text = "Local #3 (Host Adapter IP)"
     }
 
-    # 重置 3 個 Local 目標統計與走勢圖
     foreach ($k in @("Local1", "Local2", "Local3")) {
         Reset-TargetStats -stats $statsMap[$k]
         $sparkHistoryMap[$k].Clear()
@@ -1755,8 +1799,8 @@ $btnToggleLang.Add_Click({
 # 16. 事件：縮小至系統匣按鈕
 $btnMinimizeTray.Add_Click({
     $window.Hide()
-    $tipTitle = if ($script:currentLang -eq "zh") { "Network Sentinel" } else { "Network Sentinel" }
-    $tipMsg   = if ($script:currentLang -eq "zh") { "已縮小至系統匣背景持續監控中，點擊托盤圖示可喚回視窗。" } else { "Minimized to system tray. Click the tray icon to restore." }
+    $tipTitle = "Network Sentinel"
+    $tipMsg   = if ($script:currentLang -eq "zh") { "已縮小至系統匣背景持續監控中（若沒看見可點擊工作列右下角 ^ 展開）。" } else { "Running in background system tray. Click the ^ chevron on the taskbar to restore." }
     $notifyIcon.ShowBalloonTip(2000, $tipTitle, $tipMsg, [System.Windows.Forms.ToolTipIcon]::Info)
 })
 
@@ -1782,6 +1826,7 @@ $btnPauseResume.Add_Click({
         $overallDot.Fill = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#888888")
         $overallText.Text = $dict.MonitoringPaused
         $overallText.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#CCCCCC")
+        $notifyIcon.Icon = New-TrayIconGraphic -state "Paused"
         $logMsg = if ($script:currentLang -eq "zh") { "⏸️ 【監控暫停】已停止背景偵測" } else { "⏸️ [Paused] Background monitoring paused" }
         Add-LogLine -line $logMsg
     } else {
@@ -1792,6 +1837,7 @@ $btnPauseResume.Add_Click({
         $overallDot.Fill = $brushCyanText
         $overallText.Text = $dict.MonitoringActive
         $overallText.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#D0EEFF")
+        $notifyIcon.Icon = New-TrayIconGraphic -state "Online"
         $logMsg = if ($script:currentLang -eq "zh") { "▶️ 【監控恢復】已恢復背景即時偵測" } else { "▶️ [Resumed] Background monitoring resumed" }
         Add-LogLine -line $logMsg
     }
@@ -1832,6 +1878,9 @@ $window.Add_StateChanged({
     if ($window.WindowState -eq [System.Windows.WindowState]::Minimized) {
         if ($chkMinToTray.IsChecked) {
             $window.Hide()
+            $tipTitle = "Network Sentinel"
+            $tipMsg   = if ($script:currentLang -eq "zh") { "已縮小至系統匣背景持續監控中（若沒看見可點擊工作列右下角 ^ 展開）。" } else { "Running in background system tray. Click the ^ chevron on the taskbar to restore." }
+            $notifyIcon.ShowBalloonTip(2000, $tipTitle, $tipMsg, [System.Windows.Forms.ToolTipIcon]::Info)
         }
     }
 })
@@ -1847,21 +1896,24 @@ $window.Add_SourceInitialized({
 # 23. 視窗關閉事件：檢查是否最小化至托盤
 $window.Add_Closing({
     param($s, $e)
-    if ($chkMinToTray.IsChecked -and $notifyIcon.Visible) {
-        # 取消關閉，改為隱藏至系統匣
+    if (-not $script:isExiting -and $chkMinToTray.IsChecked) {
         $e.Cancel = $true
         $window.Hide()
-        $tipTitle = if ($script:currentLang -eq "zh") { "Network Sentinel" } else { "Network Sentinel" }
-        $tipMsg   = if ($script:currentLang -eq "zh") { "程式已常駐於系統匣背景執行，點擊右下角圖示可喚回視窗。" } else { "Running in background system tray. Click the tray icon to restore." }
+        $tipTitle = "Network Sentinel"
+        $tipMsg   = if ($script:currentLang -eq "zh") { "已縮小至系統匣背景持續監控中（若沒看見可點擊工作列右下角 ^ 展開）。" } else { "Running in background system tray. Click the ^ chevron on the taskbar to restore." }
         $notifyIcon.ShowBalloonTip(2000, $tipTitle, $tipMsg, [System.Windows.Forms.ToolTipIcon]::Info)
     } else {
+        $script:isExiting = $true
         $runner.Stop()
-        $notifyIcon.Visible = $false
-        $notifyIcon.Dispose()
+        if ($notifyIcon) {
+            $notifyIcon.Visible = $false
+            $notifyIcon.Dispose()
+        }
+        $app.Shutdown()
     }
 })
 
-# 24. 啟動監控並顯示視窗
+# 24. 啟動監控並啟動獨立 WPF Application 訊息迴圈
 Add-LogLine -line "🚀 Fluent Network Sentinel 已啟動 (Started)"
 Add-LogLine -line "🔍 偵測到目前網段: $($detectedSubnet.Subnet) ($($detectedSubnet.InterfaceName))"
 Add-LogLine -line "🌐 網際網路目標: www.google.com"
@@ -1870,4 +1922,5 @@ Add-LogLine -line "💻 設備目標 #2: $($detectedSubnet.Target2) ($($detected
 Add-LogLine -line "🖥️ 本機目標 #3: $($detectedSubnet.Target3) ($($detectedSubnet.Target3Desc))"
 
 $runner.Start($window.Dispatcher)
-$null = $window.ShowDialog()
+$window.Show()
+$null = $app.Run()
