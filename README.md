@@ -59,14 +59,21 @@
 
 ## 🚀 啟動方式
 
-### 方法 1：一鍵啟動（推薦）
+### 方法 1：專屬圖示捷徑啟動（最推薦）
+在檔案總管中雙擊具備專屬雷達脈衝圖示的：
+```text
+Network Sentinel
+```
+*(已綁定專屬 Windows 11 Fluent 網路雷達脈衝圖示，點擊直接無黑視窗啟動)*
+
+### 方法 2：批次檔一鍵啟動
 直接在檔案總管中雙擊：
 ```cmd
 Start-NetworkSentinel.bat
 ```
 *(會以無黑視窗背景模式啟動 Fluent UI 介面)*
 
-### 方法 2：使用 PowerShell 命令列啟動
+### 方法 3：使用 PowerShell 命令列啟動
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\NetworkSentinel.ps1
 ```
@@ -75,6 +82,8 @@ powershell -ExecutionPolicy Bypass -File .\NetworkSentinel.ps1
 
 ## 🛠️ 檔案結構說明
 
-- `NetworkSentinel.ps1`：主程式碼（包含 Sparkline 走勢圖、GDI+ 16x16 系統匣動態圖示、Toast 通知、中英文切換、自動網段辨識、WPF XAML、DWM 深色樣式 API、4 目標非同步 Ping 引擎、UI 事件處理）。
+- `NetworkSentinel.ico`：專屬高解析應用程式圖示（包含 256x256、64x64、48x48、32x32、16x16 尺寸，現代深色雷達圓盤與實時連線脈衝電波設計）。
+- `Network Sentinel.lnk`：原生 Windows 捷徑（已設定專屬雷達圖示，雙擊直接啟動）。
+- `NetworkSentinel.ps1`：主程式碼（包含 Sparkline 走勢圖、GDI+ 16x16 系統匣動態圖示、應用程式高解析圖示綁定、Toast 通知、中英文切換、自動網段辨識、WPF XAML、DWM 深色樣式 API、4 目標非同步 Ping 引擎、UI 事件處理）。
 - `Start-NetworkSentinel.bat`：快速啟動腳本，自動繞過執行原則並隱藏背景終端機視窗。
 - `README.md`：完整架構與功能說明文件。

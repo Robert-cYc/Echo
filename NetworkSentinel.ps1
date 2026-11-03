@@ -1057,6 +1057,14 @@ $xaml = @"
 # 5. 解析 XAML 生成視窗物件與控制項參照
 $window = [Windows.Markup.XamlReader]::Parse($xaml)
 
+# 載入原生高解析應用程式圖示 (工作列 / 視窗標題列 / Alt+Tab)
+$icoFile = Join-Path $PSScriptRoot "NetworkSentinel.ico"
+if (Test-Path $icoFile) {
+    try {
+        $window.Icon = [System.Windows.Media.Imaging.BitmapFrame]::Create([System.Uri]::new($icoFile))
+    } catch { }
+}
+
 # 建立 WPF Application 以支援背景常駐與顯式關閉 (Explicit Shutdown)
 $app = New-Object System.Windows.Application
 $app.ShutdownMode = [System.Windows.ShutdownMode]::OnExplicitShutdown
