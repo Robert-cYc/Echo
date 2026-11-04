@@ -673,7 +673,7 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline0" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="LblSparkline0" Text="即時波動走勢 (最近 300 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
 
                             <Border x:Name="BorderSparkline0" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
                                 <Canvas x:Name="CanvasSparkline0" Height="24" ClipToBounds="True">
@@ -783,7 +783,7 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline1" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="LblSparkline1" Text="即時波動走勢 (最近 300 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
 
                             <Border x:Name="BorderSparkline1" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
                                 <Canvas x:Name="CanvasSparkline1" Height="24" ClipToBounds="True">
@@ -893,7 +893,7 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline2" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="LblSparkline2" Text="即時波動走勢 (最近 300 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
 
                             <Border x:Name="BorderSparkline2" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
                                 <Canvas x:Name="CanvasSparkline2" Height="24" ClipToBounds="True">
@@ -1003,7 +1003,7 @@ $xaml = @"
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <TextBlock x:Name="LblSparkline3" Text="即時波動走勢 (最近 30 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="LblSparkline3" Text="即時波動走勢 (最近 300 次):" FontSize="10" Foreground="#777777" VerticalAlignment="Center" Margin="0,0,8,0"/>
 
                             <Border x:Name="BorderSparkline3" Grid.Column="1" Background="#171717" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="4" Height="24" ClipToBounds="True">
                                 <Canvas x:Name="CanvasSparkline3" Height="24" ClipToBounds="True">
@@ -1167,14 +1167,14 @@ $statsMap = @{
     "Local3" = New-TargetStat
 }
 
-# 過去 30 次 Ping 歷史走勢數值佇列
+# 過去 300 次 Ping 歷史走勢數值佇列
 $sparkHistoryMap = @{
     "Google" = [System.Collections.Generic.List[long]]::new()
     "Local1" = [System.Collections.Generic.List[long]]::new()
     "Local2" = [System.Collections.Generic.List[long]]::new()
     "Local3" = [System.Collections.Generic.List[long]]::new()
 }
-$maxSparkPoints = 30
+$maxSparkPoints = 300
 
 $cardsMap = @{
     "Google" = @{
@@ -1279,7 +1279,7 @@ $i18n = @{
         LossRate         = "遺失率 (Lost/Total)"
         LastSeen         = "最後回應時間"
         Waiting          = "等待回應..."
-        SparklineLabel   = "即時波動走勢 (最近 30 次):"
+        SparklineLabel   = "即時波動走勢 (最近 300 次):"
         JitterPrefix     = "抖動:"
         ActivityFeed     = "📋 即時偵測日誌 (滿 100 筆自動清除)"
         ClearLog         = "清除日誌"
@@ -1343,7 +1343,7 @@ Jitter 代表 Ping 值的穩定度與波動幅度（例如一秒測出來是 20m
         LossRate         = "Packet Loss"
         LastSeen         = "Last Seen"
         Waiting          = "Waiting..."
-        SparklineLabel   = "Latency Waveform (Last 30):"
+        SparklineLabel   = "Latency Waveform (Last 300):"
         JitterPrefix     = "Jitter:"
         ActivityFeed     = "📋 Activity Feed (Auto-clears at 100)"
         ClearLog         = "Clear Log"
