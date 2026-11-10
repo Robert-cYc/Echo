@@ -13,6 +13,10 @@
     - 4 組目標同步即時監控，滿 100 筆自動清除日誌
 #>
 
+param(
+    [switch]$Startup
+)
+
 # 1. 載入 WPF、Windows Forms 與系統繪圖組件
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Drawing, System.Windows.Forms
 
@@ -250,7 +254,7 @@ $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Network Sentinel - Fluent Network Monitor"
-        Height="900" Width="830" MinHeight="750" MinWidth="760"
+        Height="900" Width="860" MinHeight="750" MinWidth="820"
         WindowStartupLocation="CenterScreen"
         Background="#181818"
         Foreground="#EDEDED"
@@ -523,14 +527,15 @@ $xaml = @"
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <!-- Interval -->
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
                     <TextBlock x:Name="TxtIntervalLabel" Text="偵測間隔:" VerticalAlignment="Center" FontSize="12" Foreground="#B0B0B0" Margin="0,0,6,0"/>
-                    <ComboBox x:Name="CmbInterval" Style="{StaticResource FluentComboBoxStyle}" SelectedIndex="0" Width="125" Height="28">
+                    <ComboBox x:Name="CmbInterval" Style="{StaticResource FluentComboBoxStyle}" SelectedIndex="0" Width="120" Height="28">
                         <ComboBoxItem x:Name="CmbItem1" Content="1 秒 (1000ms)" Tag="1000"/>
                         <ComboBoxItem x:Name="CmbItem2" Content="2 秒 (2000ms)" Tag="2000"/>
                         <ComboBoxItem x:Name="CmbItem3" Content="3 秒 (3000ms)" Tag="3000"/>
@@ -539,13 +544,16 @@ $xaml = @"
                 </StackPanel>
 
                 <!-- Sound Alert -->
-                <CheckBox x:Name="ChkSoundAlert" Grid.Column="1" Content="斷線警報音效" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,12,0" Cursor="Hand"/>
+                <CheckBox x:Name="ChkSoundAlert" Grid.Column="1" Content="斷線警報音效" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,10,0" Cursor="Hand"/>
 
                 <!-- Min to Tray Checkbox -->
                 <CheckBox x:Name="ChkMinToTray" Grid.Column="2" Content="關閉時縮小至系統匣" IsChecked="True" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,10,0" Cursor="Hand"/>
 
+                <!-- Auto Start Checkbox -->
+                <CheckBox x:Name="ChkAutoStart" Grid.Column="3" Content="開機自動啟動" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,10,0" Cursor="Hand"/>
+
                 <!-- Right Action Buttons -->
-                <StackPanel Grid.Column="4" Orientation="Horizontal">
+                <StackPanel Grid.Column="5" Orientation="Horizontal">
                     <Button x:Name="BtnMinimizeTray" Content="📥 縮至系統匣" Style="{StaticResource FluentButtonStyle}" Margin="0,0,6,0" Padding="8,3"/>
                     <Button x:Name="BtnToggleLang" Content="🌐 English" Style="{StaticResource FluentButtonStyle}" Margin="0,0,6,0" Padding="8,3"/>
                     <Button x:Name="BtnPauseResume" Content="暫停偵測" Style="{StaticResource FluentButtonStyle}" Margin="0,0,6,0" Padding="8,3"/>
@@ -1079,6 +1087,7 @@ $cmbItem5          = $window.FindName("CmbItem5")
 $txtIntervalLabel  = $window.FindName("TxtIntervalLabel")
 $chkSoundAlert     = $window.FindName("ChkSoundAlert")
 $chkMinToTray      = $window.FindName("ChkMinToTray")
+$chkAutoStart      = $window.FindName("ChkAutoStart")
 $btnMinimizeTray   = $window.FindName("BtnMinimizeTray")
 $btnToggleLang     = $window.FindName("BtnToggleLang")
 $btnPauseResume    = $window.FindName("BtnPauseResume")
@@ -1258,6 +1267,7 @@ $i18n = @{
         IntervalLabel    = "偵測間隔:"
         SoundAlert       = "斷線警報音效"
         MinToTrayChk     = "關閉時縮小至系統匣"
+        AutoStartChk     = "開機自動啟動"
         BtnTrayText      = "📥 縮至系統匣"
         Pause            = "暫停偵測"
         Resume           = "繼續偵測"
@@ -1322,6 +1332,7 @@ Jitter 代表 Ping 值的穩定度與波動幅度（例如一秒測出來是 20m
         IntervalLabel    = "Interval:"
         SoundAlert       = "Alert on Disconnect"
         MinToTrayChk     = "Minimize to Tray on Close"
+        AutoStartChk     = "Start with Windows"
         BtnTrayText      = "📥 To Tray"
         Pause            = "Pause"
         Resume           = "Resume"
@@ -1475,6 +1486,7 @@ function Apply-Language {
     $txtIntervalLabel.Text = $dict.IntervalLabel
     $chkSoundAlert.Content = $dict.SoundAlert
     $chkMinToTray.Content  = $dict.MinToTrayChk
+    $chkAutoStart.Content  = $dict.AutoStartChk
     $btnMinimizeTray.Content = $dict.BtnTrayText
     $btnToggleLang.Content = $dict.ToggleBtnText
     $btnResetStats.Content = $dict.ResetStats
@@ -1883,6 +1895,48 @@ $btnMinimizeTray.Add_Click({
     $notifyIcon.ShowBalloonTip(2000, $tipTitle, $tipMsg, [System.Windows.Forms.ToolTipIcon]::Info)
 })
 
+# 16.1 Windows 開機自動啟動 (Auto-Start) 邏輯
+$regRunPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$regRunName = "FluentNetworkSentinel"
+
+function Get-SentinelAutoStartCmd {
+    $ps1 = (Join-Path $PSScriptRoot "NetworkSentinel.ps1")
+    return "powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -Command `"`$p='$ps1'; for(`$i=0;`$i -lt 30;`$i++){ if(Test-Path `$p){ & `$p -Startup; break }; Start-Sleep -Seconds 1 }`""
+}
+
+function Test-SentinelAutoStart {
+    try {
+        $val = (Get-ItemProperty -Path $regRunPath -Name $regRunName -ErrorAction SilentlyContinue).$regRunName
+        return [bool]($val)
+    } catch {
+        return $false
+    }
+}
+
+function Set-SentinelAutoStart {
+    param([bool]$enable)
+    if ($enable) {
+        $cmd = Get-SentinelAutoStartCmd
+        Set-ItemProperty -Path $regRunPath -Name $regRunName -Value $cmd
+    } else {
+        Remove-ItemProperty -Path $regRunPath -Name $regRunName -ErrorAction SilentlyContinue
+    }
+}
+
+# 讀取當前 Windows 開機啟動狀態並初始化核取方塊
+$chkAutoStart.IsChecked = Test-SentinelAutoStart
+
+$chkAutoStart.Add_Click({
+    Set-SentinelAutoStart -enable $chkAutoStart.IsChecked
+    if ($chkAutoStart.IsChecked) {
+        $msg = if ($script:currentLang -eq "zh") { "⚙️ 【設定更新】已啟用 Windows 開機自動常駐系統匣" } else { "⚙️ [Setting] Auto start with Windows enabled" }
+        Add-LogLine -line $msg
+    } else {
+        $msg = if ($script:currentLang -eq "zh") { "⚙️ 【設定更新】已取消 Windows 開機自動啟動" } else { "⚙️ [Setting] Auto start with Windows disabled" }
+        Add-LogLine -line $msg
+    }
+})
+
 # 17. 事件：偵測間隔變更
 $cmbInterval.Add_SelectionChanged({
     $selectedItem = $cmbInterval.SelectedItem
@@ -2001,5 +2055,13 @@ Add-LogLine -line "💻 設備目標 #2: $($detectedSubnet.Target2) ($($detected
 Add-LogLine -line "🖥️ 本機目標 #3: $($detectedSubnet.Target3) ($($detectedSubnet.Target3Desc))"
 
 $runner.Start($window.Dispatcher)
-$window.Show()
+
+if ($Startup) {
+    # Windows 開機自動啟動：直接常駐系統匣背景持續監控
+    $startMsg = if ($script:currentLang -eq "zh") { "已於開機自動常駐系統匣背景持續監控中（若沒看見可點擊工作列右下角 ^ 展開）。" } else { "Started in background system tray on Windows startup." }
+    $notifyIcon.ShowBalloonTip(3000, "Network Sentinel", $startMsg, [System.Windows.Forms.ToolTipIcon]::Info)
+} else {
+    $window.Show()
+}
+
 $null = $app.Run()
