@@ -176,7 +176,7 @@ public class PingMonitorRunner {
 
 Add-Type -TypeDefinition $csharpSource -ReferencedAssemblies "PresentationFramework", "WindowsBase", "System"
 
-# 3. 智慧網段偵測函式
+# 3. 智慧網段偵測函式 (重新枚舉所有網卡，優先選取連網網卡；無外網時自動選取通訊最活躍之區域網卡)
 function Get-CurrentSubnetInfo {
     $info = [PSCustomObject]@{
         InterfaceName = "Wi-Fi / Ethernet"
@@ -187,57 +187,166 @@ function Get-CurrentSubnetInfo {
         Target1       = "192.168.1.1"
         Target2       = "192.168.1.2"
         Target3       = "192.168.1.254"
-        Target2Desc   = "網段設備"
-        Target3Desc   = "本機網卡"
+        Target1Desc   = "網段預設閘道"
+        Target2Desc   = "網段活躍設備"
+        Target3Desc   = "本機實體 IP"
+        HasInternet   = $false
     }
 
     try {
-        $netConfig = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1
-        if ($netConfig) {
-            $info.InterfaceName = $netConfig.InterfaceAlias
-            $ipObj = $netConfig.IPv4Address | Select-Object -First 1
-            if ($ipObj) {
-                $info.LocalIP = $ipObj.IPAddress
+        # 1. 檢測全域網際網路連線能力 (快速探測 8.8.8.8 / 1.1.1.1)
+        $canReachInternet = $false
+        $bestInternetIfIndex = $null
+        try {
+            $testPing = New-Object System.Net.NetworkInformation.Ping
+            $reply = $testPing.Send("8.8.8.8", 600)
+            if ($reply.Status -eq [System.Net.NetworkInformation.IPStatus]::Success) {
+                $canReachInternet = $true
+            } else {
+                $reply2 = $testPing.Send("1.1.1.1", 600)
+                if ($reply2.Status -eq [System.Net.NetworkInformation.IPStatus]::Success) {
+                    $canReachInternet = $true
+                }
             }
-            $gwObj = $netConfig.IPv4DefaultGateway | Select-Object -First 1
-            if ($gwObj) {
-                $info.Gateway = $gwObj.NextHop
-            }
+        } catch { }
 
-            $netIP = Get-NetIPAddress -InterfaceIndex $netConfig.InterfaceIndex -AddressFamily IPv4 | Where-Object { $_.IPAddress -eq $info.LocalIP } | Select-Object -First 1
-            if ($netIP) {
-                $info.PrefixLength = $netIP.PrefixLength
-            }
+        if ($canReachInternet) {
+            try {
+                $bestRoute = Find-NetRoute -RemoteIPAddress "8.8.8.8" -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($bestRoute) {
+                    $bestInternetIfIndex = $bestRoute.InterfaceIndex
+                }
+            } catch { }
+        }
 
-            $ipParts = $info.LocalIP.Split('.')
-            if ($ipParts.Count -eq 4) {
-                $prefix3 = "$($ipParts[0]).$($ipParts[1]).$($ipParts[2])"
+        # 2. 重新枚舉所有目前作用中 (Status = Up) 的網路卡
+        $activeAdapters = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' }
+        $candidates = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+        foreach ($ad in $activeAdapters) {
+            try {
+                $netConfig = Get-NetIPConfiguration -InterfaceIndex $ad.InterfaceIndex -ErrorAction SilentlyContinue
+                if (-not $netConfig) { continue }
+
+                # 提取有效之 IPv4 位址 (排除 Loopback 127.* 與 APIPA 169.254.*)
+                $ipv4List = $netConfig.IPv4Address | Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' }
+                if (-not $ipv4List -or $ipv4List.Count -eq 0) { continue }
+
+                $curLocalIP = ($ipv4List | Select-Object -First 1).IPAddress
+                $curGw = ($netConfig.IPv4DefaultGateway | Select-Object -First 1).NextHop
+
+                $netIP = Get-NetIPAddress -InterfaceIndex $ad.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                         Where-Object { $_.IPAddress -eq $curLocalIP } | Select-Object -First 1
+                $prefixLen = if ($netIP) { $netIP.PrefixLength } else { 24 }
+
+                # 檢查 Windows NCSI 連線設定檔是否標註 Internet
+                $profile = Get-NetConnectionProfile -InterfaceIndex $ad.InterfaceIndex -ErrorAction SilentlyContinue | Select-Object -First 1
+                $isNcsiInternet = ($profile -and $profile.IPv4Connectivity -eq 'Internet')
+
+                # 判斷是否為有上網之網卡
+                $isInternetCard = ($ad.InterfaceIndex -eq $bestInternetIfIndex) -or ($canReachInternet -and $isNcsiInternet)
+
+                # 查詢該網卡同網段中可通訊之鄰近節點 (Reachable ARP Neighbors)
+                $ipParts = $curLocalIP.Split('.')
+                $prefix3 = if ($ipParts.Count -eq 4) { "$($ipParts[0]).$($ipParts[1]).$($ipParts[2])" } else { "" }
+
+                $neighbors = @()
+                if ($prefix3) {
+                    $neighbors = Get-NetNeighbor -InterfaceIndex $ad.InterfaceIndex -AddressFamily IPv4 -State Reachable -ErrorAction SilentlyContinue |
+                                 Where-Object {
+                                     $_.IPAddress -ne $curGw -and
+                                     $_.IPAddress -ne $curLocalIP -and
+                                     $_.IPAddress -notmatch '^(224\.|239\.|255\.|127\.|169\.254\.)' -and
+                                     $_.IPAddress.StartsWith("$prefix3.")
+                                 } | ForEach-Object { $_.IPAddress }
+                }
+
+                # 取得網卡總流量統計 (Bytes)
+                $stats = Get-NetAdapterStatistics -Name $ad.Name -ErrorAction SilentlyContinue
+                $traffic = if ($stats) { [long]($stats.ReceivedBytes + $stats.SentBytes) } else { 0L }
+
+                # 計算 Local 活躍通訊權重評分 (供無外網時自動選取最活躍的區網網段)
+                $localScore = 0
+                if ($ad.HardwareInterface) { $localScore += 50 } # 優先考慮實體網卡 (Wi-Fi/以太網)
+                if ($curGw) { $localScore += 40 }               # 有預設閘道代表連接到路由器或 L3 交換機
+                $localScore += [math]::Min(60, $neighbors.Count * 20) # 活躍通訊的區域設備數量
+                if ($traffic -gt 50000) { $localScore += 10 }   # 有實際收發流量
+
+                $candidates.Add([PSCustomObject]@{
+                    Adapter           = $ad
+                    InterfaceAlias    = $ad.InterfaceAlias
+                    InterfaceIndex    = $ad.InterfaceIndex
+                    HardwareInterface = $ad.HardwareInterface
+                    LocalIP           = $curLocalIP
+                    Gateway           = $curGw
+                    PrefixLength      = $prefixLen
+                    Prefix3           = $prefix3
+                    IsInternet        = $isInternetCard
+                    Neighbors         = $neighbors
+                    Traffic           = $traffic
+                    LocalScore        = $localScore
+                })
+            } catch { }
+        }
+
+        # 3. 網卡選取邏輯：
+        $selected = $null
+
+        # 優先策略：如果有上網，抓有上網的網卡網段
+        if ($canReachInternet) {
+            $selected = $candidates | Where-Object { $_.IsInternet } | Select-Object -First 1
+            if (-not $selected) {
+                $selected = $candidates | Where-Object { $_.Gateway -and $_.HardwareInterface } | Select-Object -First 1
+            }
+            if (-not $selected) {
+                $selected = $candidates | Where-Object { $_.Gateway } | Select-Object -First 1
+            }
+        }
+
+        # 次要策略：如果沒有上網，抓 Local 有網路通訊的網段 (依 Local 活躍評分排序)
+        if (-not $selected -and $candidates.Count -gt 0) {
+            $selected = $candidates | Sort-Object -Property LocalScore, Traffic -Descending | Select-Object -First 1
+        }
+
+        # 4. 裝載選取之網卡網段資訊與 3 組區域監控目標
+        if ($selected) {
+            $info.HasInternet   = [bool]($selected.IsInternet -or $canReachInternet)
+            $suffixTag          = if ($info.HasInternet) { "🌐 Internet" } else { "📡 Local LAN" }
+            $info.InterfaceName = "$($selected.InterfaceAlias) [$suffixTag]"
+            $info.LocalIP       = $selected.LocalIP
+            $info.Gateway       = if ($selected.Gateway) { $selected.Gateway } else { "$($selected.Prefix3).1" }
+            $info.PrefixLength  = $selected.PrefixLength
+
+            $prefix3 = $selected.Prefix3
+            if ($prefix3) {
                 $info.Subnet = "$prefix3.0/$($info.PrefixLength)"
-                $info.Target1 = $info.Gateway
 
-                $neighbors = Get-NetNeighbor -InterfaceIndex $netConfig.InterfaceIndex -AddressFamily IPv4 -State Reachable -ErrorAction SilentlyContinue |
-                             Where-Object { 
-                                 $_.IPAddress -ne $info.Gateway -and 
-                                 $_.IPAddress -ne $info.LocalIP -and 
-                                 $_.IPAddress -notmatch '^(224\.|239\.|255\.|127\.|169\.254\.)' -and
-                                 $_.IPAddress.StartsWith("$prefix3.")
-                             }
+                # 目標 1：閘道器 (Gateway) 或網段第一台主機
+                if ($selected.Gateway) {
+                    $info.Target1 = $selected.Gateway
+                    $info.Target1Desc = "網段預設閘道"
+                } else {
+                    $info.Target1 = "$prefix3.1"
+                    $info.Target1Desc = "網段節點 #1"
+                }
 
-                $activeNeighbor = ($neighbors | Select-Object -First 1).IPAddress
+                # 目標 2：同網段活躍通訊設備 (ARP Neighbor)，若無則預設為 .2
+                $activeNeighbor = $selected.Neighbors | Select-Object -First 1
                 if ($activeNeighbor) {
                     $info.Target2 = $activeNeighbor
                     $info.Target2Desc = "網段活躍設備"
                 } else {
                     $info.Target2 = "$prefix3.2"
-                    $info.Target2Desc = "網段主機 #2"
+                    $info.Target2Desc = "網段設備 #2"
                 }
 
+                # 目標 3：本機實體 IP 或網段主機 .254
                 if ($info.LocalIP -and $info.LocalIP -ne $info.Target1 -and $info.LocalIP -ne $info.Target2) {
                     $info.Target3 = $info.LocalIP
                     $info.Target3Desc = "本機實體 IP"
                 } else {
                     $info.Target3 = "$prefix3.254"
-                    $info.Target3Desc = "網段主機 #3"
+                    $info.Target3Desc = "網段設備 #3"
                 }
             }
         }
@@ -1293,7 +1402,7 @@ $i18n = @{
         JitterPrefix     = "抖動:"
         ActivityFeed     = "📋 即時偵測日誌 (滿 100 筆自動清除)"
         ClearLog         = "清除日誌"
-        Target1Title     = "區域設備 #1 (網段預設閘道)"
+        Target1Title     = "區域設備 #1 ($($detectedSubnet.Target1Desc))"
         Target2Title     = "區域設備 #2 ($($detectedSubnet.Target2Desc))"
         Target3Title     = "區域設備 #3 ($($detectedSubnet.Target3Desc))"
         Interval_1s      = "1 秒 (1000ms)"
@@ -1858,9 +1967,11 @@ $btnRedetectSubnet.Add_Click({
     $runner.LocalTarget3 = $newSubnet.Target3
 
     if ($script:currentLang -eq "zh") {
+        if ($newSubnet.Target1Desc) { $txtLocalTitle1.Text = "區域設備 #1 ($($newSubnet.Target1Desc))" }
         if ($newSubnet.Target2Desc) { $txtLocalTitle2.Text = "區域設備 #2 ($($newSubnet.Target2Desc))" }
         if ($newSubnet.Target3Desc) { $txtLocalTitle3.Text = "區域設備 #3 ($($newSubnet.Target3Desc))" }
     } else {
+        $txtLocalTitle1.Text = "Local #1 (Default Gateway)"
         $txtLocalTitle2.Text = "Local #2 (Active Subnet Node)"
         $txtLocalTitle3.Text = "Local #3 (Host Adapter IP)"
     }
@@ -1870,7 +1981,19 @@ $btnRedetectSubnet.Add_Click({
         $sparkHistoryMap[$k].Clear()
     }
 
-    $logMsg1 = if ($script:currentLang -eq "zh") { "🔍 【網段重整】成功辨識網段: $($newSubnet.Subnet) ($($newSubnet.InterfaceName))" } else { "🔍 [Subnet Refresh] Subnet discovered: $($newSubnet.Subnet) ($($newSubnet.InterfaceName))" }
+    $logMsg1 = if ($script:currentLang -eq "zh") {
+        if ($newSubnet.HasInternet) {
+            "🔍 【網段重整】成功辨識並選取連網網卡: $($newSubnet.Subnet) ($($newSubnet.InterfaceName))"
+        } else {
+            "🔍 【網段重整】無對外網路，選取通訊活躍之區網網卡: $($newSubnet.Subnet) ($($newSubnet.InterfaceName))"
+        }
+    } else {
+        if ($newSubnet.HasInternet) {
+            "🔍 [Subnet Refresh] Connected to Internet: $($newSubnet.Subnet) ($($newSubnet.InterfaceName))"
+        } else {
+            "🔍 [Subnet Refresh] Offline, selected active LAN: $($newSubnet.Subnet) ($($newSubnet.InterfaceName))"
+        }
+    }
     $logMsg2 = if ($script:currentLang -eq "zh") { "📡 已同步更新區網監控目標: $($newSubnet.Target1) / $($newSubnet.Target2) / $($newSubnet.Target3)" } else { "📡 Synchronized local targets: $($newSubnet.Target1) / $($newSubnet.Target2) / $($newSubnet.Target3)" }
     Add-LogLine -line $logMsg1
     Add-LogLine -line $logMsg2
@@ -2050,7 +2173,7 @@ $window.Add_Closing({
 Add-LogLine -line "🚀 Fluent Network Sentinel 已啟動 (Started)"
 Add-LogLine -line "🔍 偵測到目前網段: $($detectedSubnet.Subnet) ($($detectedSubnet.InterfaceName))"
 Add-LogLine -line "🌐 網際網路目標: www.google.com"
-Add-LogLine -line "📡 閘道目標 #1: $($detectedSubnet.Target1)"
+Add-LogLine -line "📡 閘道目標 #1: $($detectedSubnet.Target1) ($($detectedSubnet.Target1Desc))"
 Add-LogLine -line "💻 設備目標 #2: $($detectedSubnet.Target2) ($($detectedSubnet.Target2Desc))"
 Add-LogLine -line "🖥️ 本機目標 #3: $($detectedSubnet.Target3) ($($detectedSubnet.Target3Desc))"
 
